@@ -5,6 +5,7 @@ import sys
 sys.path.insert(0, '../../')
 from nasbench201.utils import drop_path
 from video_network import ResNet18 as resnet18
+from video_network import VideoResnet101 as resnet101
 
 
 
@@ -103,7 +104,8 @@ class Network(nn.Module):
         self._steps = steps
         self._multiplier = multiplier
         self.drop_path_prob = drop_path_prob
-        self.num_segments = 5
+        self.num_segments = 5#16
+        print(self.num_segments,  'n segments perche ce pool operation')
 
         nn.Module.PRIMITIVES = primitives; self.op_names = primitives
 
@@ -122,7 +124,7 @@ class Network(nn.Module):
 
         self.cells += [cell]
 
-        self.net = resnet18(num_classes, self.num_segments).cuda()
+        self.net = resnet101(num_classes, self.num_segments).cuda()
 
         self._initialize_alphas()
 

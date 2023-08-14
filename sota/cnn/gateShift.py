@@ -3,7 +3,7 @@ from torch import nn
 from torch.cuda import FloatTensor as ftens
 
 class GSF(nn.Module):
-    def __init__(self, fPlane, num_segments=8, gsf_ch_ratio=100):
+    def __init__(self, fPlane, num_segments=8, gsf_ch_ratio=25):
         super(GSF, self).__init__()
 
         fPlane_temp = int(fPlane * gsf_ch_ratio / 100)

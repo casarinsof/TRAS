@@ -29,7 +29,7 @@ OPS = {
 }
 
 class Pool(nn.Module):
-    def __init__(self, num_frames, outsize=(64,64)):
+    def __init__(self, num_frames, outsize=(32,32)):
         super(Pool, self).__init__()
         self.num_frames = num_frames
         self.pool = nn.MaxPool2d(2)

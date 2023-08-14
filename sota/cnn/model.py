@@ -6,7 +6,7 @@ import sys
 sys.path.insert(0, '../../')
 from nasbench201.utils import drop_path
 from video_network import ResNet18 as resnet18
-
+from video_network import VideoResnet101 as resnet101
 class Cell(nn.Module):
 
     def __init__(self, genotype,  num_segments):
@@ -94,7 +94,8 @@ class Network(nn.Module):
         self._layers = layers
         self._auxiliary = auxiliary
         # todo rimettilo a 16
-        self.num_segments= 8 #5
+        self.num_segments= 6 #rimetterlo a 16
+        print(self.num_segments, 'n segments perche ce pool operation\n\n')
         self._steps = 1
 
        # self.stem = nn.Sequential(
@@ -110,7 +111,7 @@ class Network(nn.Module):
 
         self.cells += [cell]
 
-        self.net = resnet18(num_classes, self.num_segments).cuda()
+        self.net = resnet101(num_classes, self.num_segments).cuda()
 
 
 
