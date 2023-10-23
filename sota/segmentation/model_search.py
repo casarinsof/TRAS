@@ -5,11 +5,14 @@ import sys
 
 sys.path.insert(0, '../../')
 from nasbench201.utils import drop_path
-from models.video_network import VideoResnet18 as resnet18
-from models.video_network import VideoResnet101 as resnet101
-from models.video_network import VideoResnet152 as resnet152
-from models.video_network import VideoResnet50 as resnet50
+import models
 import torch
+
+
+
+def get_instance(module, name, config, *args):
+    # GET THE CORRESPONDING CLASS / FCT
+    return getattr(module, config[name]['type'])(*args, **config[name]['args'])
 
 
 class MixedOp(nn.Module):
@@ -43,9 +46,9 @@ class Cell(nn.Module):
         super(Cell, self).__init__()
         self.primitives = self.PRIMITIVES['primitives_normal']
 
-       # self.shift_amount = 2  # amount of shift in pixels
-       # self.zoom_factor = 0.2
-       # self.rotation_angle = 3
+        # self.shift_amount = 2  # amount of shift in pixels
+        # self.zoom_factor = 0.2
+        # self.rotation_angle = 3
 
         self.num_frames = num_segments
         self.num_classes = num_classes
@@ -55,8 +58,6 @@ class Cell(nn.Module):
         respectively. The purpose of preprocessing is to adjust the number of channels in the input tensors to match 
         the number of output channels (C) in the cell.
         """
-
-        # self.preprocess0 = ReLUConvBN(C_prev_prev, C, 1, 1, 0, affine=False)
 
         self._steps = steps
         self._multiplier = multiplier
@@ -87,11 +88,11 @@ class Cell(nn.Module):
             offset += len(states)
             states.append(s)
 
-        return  torch.cat(states[-self._multiplier:], dim=1) #states[1].view((-1, s0.shape[1]) + states[1].size()[-2:])
+        return torch.cat(states[-self._multiplier:], dim=1)
 
 
 class Network(nn.Module):
-    def __init__(self, C, num_classes, layers, criterion, primitives, args,
+    def __init__(self, C, num_classes, layers, criterion, primitives, config,
                  steps=4, multiplier=1, stem_multiplier=1, drop_path_prob=0):
         super(Network, self).__init__()
         #### original code
@@ -102,39 +103,47 @@ class Network(nn.Module):
         self._steps = steps
         self._multiplier = multiplier
         self.drop_path_prob = drop_path_prob
-
+        self.config = config
         self.num_segments = 8
 
-
-        nn.Module.PRIMITIVES = primitives; self.op_names = primitives
+        nn.Module.PRIMITIVES = primitives;
+        self.op_names = primitives
 
         self.stem = Replicate(self.num_segments)
 
         self.cells = nn.ModuleList()
 
-        for i in range(layers): #generalized to multiple cells (layers != 1)
+        for i in range(layers):  # generalized to multiple cells (layers != 1)
             cell = Cell(steps, multiplier, self.num_segments, num_classes)
             self.cells += [cell]
 
+        # todo questo lo devo mettere dentro  dartsProj
+        self.net = get_instance(models, 'arch', config, num_classes)
 
-        if args.backbone == 'resnet18':
-            self.net = resnet18(False, num_classes, self.num_segments).cuda()
-        if args.backbone == 'resnet50':
-            self.net = resnet50(False, num_classes, self.num_segments).cuda()
-        if args.backbone == 'resnet101':
-            self.net = resnet101(False, num_classes, self.num_segments).cuda()
-        if args.backbone == 'resnet152':
-            self.net = resnet152(False, num_classes, self.num_segments).cuda()
+
+        # OPTIMIZER
+        if self.config['optimizer']['differential_lr']:
+            if isinstance(self, torch.nn.DataParallel):
+                trainable_params = [
+                    {'params': filter(lambda p: p.requires_grad, self.net.module.get_decoder_params())},
+                    {'params': filter(lambda p: p.requires_grad, self.net.module.get_backbone_params()),
+                     'lr': config['optimizer']['args']['lr'] / 10}]
+            else:
+                trainable_params = [{'params': filter(lambda p: p.requires_grad, self.net.get_decoder_params())},
+                                    {'params': filter(lambda p: p.requires_grad, self.net.get_backbone_params()),
+                                     'lr': config['optimizer']['args']['lr'] / 10}]
+        else:
+            trainable_params = filter(lambda p: p.requires_grad, self.parameters()) #vedi self._get_weights. Chiama self.parameters()
+        self.optimizer = get_instance(torch.optim, 'optimizer', config, trainable_params)
+
+
+        print(f'\n{self}\n')
+
 
         self._initialize_alphas()
 
-        #### optimizer
-        self._args = args
-        self.optimizer = torch.optim.SGD(
-            self.get_weights(),
-            args.learning_rate,
-            momentum=args.momentum,
-            weight_decay=args.weight_decay)
+
+
 
     def reset_optimizer(self, lr, momentum, weight_decay):
         del self.optimizer
@@ -144,10 +153,29 @@ class Network(nn.Module):
             momentum=momentum,
             weight_decay=weight_decay)
 
-    def _loss(self, input, target, return_logits=False):
-        logits = self(input)
-        loss = self._criterion(logits, target)
-        return (loss, logits) if return_logits else loss
+    def _loss(self, input, target, return_logits=False, train=True):
+        output = self(input)
+
+
+        if self.config['arch']['type'][:3] == 'PSP' and train: #todo manca differnziare tra traine  val come fanno in repo segmentation perche
+            #durante val non c'e' la auxiliary loss dunque non serve questo assertion
+            assert output[0].size()[2:] == target.size()[1:]
+            assert output[0].size()[1] == self._num_classes
+            loss = self._criterion(output[0], target)
+            loss += self._criterion(output[1], target) * 0.4
+
+            output = output[0]
+
+        else:
+            assert output.size()[2:] == target.size()[1:]
+            assert output.size()[1] == self._num_classes
+            loss = self._criterion(output, target)
+
+            if isinstance(self._criterion, torch.nn.DataParallel):
+               loss = loss.mean()
+
+
+        return (loss, output) if return_logits else loss
 
     def _initialize_alphas(self):
         k = sum(1 for i in range(self._steps) for n in
@@ -181,13 +209,13 @@ class Network(nn.Module):
 
         return logits
 
-    def step(self, input, target, args, shared=None):
+    def step(self, input, target, config, shared=None):
         assert shared is None, 'gradient sharing disabled'
 
         Lt, logit_t = self._loss(input, target, return_logits=True)
         Lt.backward()
 
-        nn.utils.clip_grad_norm_(self.get_weights(), args.grad_clip)
+        nn.utils.clip_grad_norm_(self.get_weights(), config['trainer']['grad_clip'])
         self.optimizer.step()
 
         return logit_t, Lt
@@ -215,8 +243,8 @@ class Network(nn.Module):
         return self.parameters()
 
     def new(self):
-        model_new = Network(self._C, self._num_classes, self._layers, self._criterion, self.PRIMITIVES, self._args, \
-                            drop_path_prob=self.drop_path_prob).cuda()
+        model_new = Network(self._C, self._num_classes, self._layers, self._criterion, self.PRIMITIVES, self.config, \
+                            drop_path_prob=self.drop_path_prob)
         for x, y in zip(model_new.arch_parameters(), self.arch_parameters()):
             x.data.copy_(y.data)
         return model_new
@@ -242,7 +270,8 @@ class Network(nn.Module):
                 W = weights[start:end].copy()
 
                 try:
-                    edges = sorted(range(i + 2), key=lambda x: -max(W[x][k] for k in range(len(W[x])) if k != PRIMITIVES[x].index('none')))[:2]
+                    edges = sorted(range(i + 2), key=lambda x: -max(
+                        W[x][k] for k in range(len(W[x])) if k != PRIMITIVES[x].index('none')))[:2]
                 except ValueError:  # This error happens when the 'none' op is not present in the ops
                     edges = sorted(range(i + 2), key=lambda x: -max(W[x][k] for k in range(len(W[x]))))[:2]
 
