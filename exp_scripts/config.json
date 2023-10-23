@@ -36,7 +36,7 @@
             "data_dir": "/home/sofiacasarin/data/VOC/",
             "batch_size": 4,
             "base_size": 400,
-            "crop_size": 180,
+            "crop_size": 380,
             "augment": true,
             "shuffle": true,
             "scale": true,
