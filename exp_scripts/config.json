@@ -1,0 +1,141 @@
+{
+    "name": "PSPNet",
+    "n_gpu": 1,
+    "use_synch_bn": false,
+
+    "space": {
+        "seed": 2,
+        "search_space": "s5",
+        "layers": 1,
+        "init_channels": 3
+    },
+
+    "arch": {
+        "type": "PSPNet",
+        "args": {
+            "backbone": "resnet50",
+            "freeze_bn": false,
+            "freeze_backbone": false,
+            "atrous": true
+        },
+        "phase": "search",
+        "method": "darts"
+    },
+    "architect": {
+        "arch_opt": "adam",
+        "arch_learning_rate": 3e-4,
+        "arch_weight_decay": 1e-3,
+        "perturb_alpha": "none",
+        "epsilon_alpha": 0.3
+
+    },
+
+    "train_loader": {
+        "type": "VOC",
+        "args":{
+            "data_dir": "/home/sofiacasarin/data/VOC/",
+            "batch_size": 4,
+            "base_size": 400,
+            "crop_size": 180,
+            "augment": true,
+            "shuffle": true,
+            "scale": true,
+            "flip": true,
+            "rotate": true,
+            "blur": true,
+            "split": "train",
+            "num_workers": 8,
+            "val_split": 0.99
+        }
+    },
+
+    "val_loader": {
+        "type": "VOC",
+        "args":{
+            "data_dir":  "/home/sofiacasarin/data/VOC/",
+            "batch_size": 2,
+            "crop_size": 480,
+            "val": true,
+            "split": "val_aug",
+            "num_workers": 4
+        }
+    },
+    "test_loader": {
+        "type": "VOC",
+        "args":{
+            "data_dir":  "/home/sofiacasarin/data/VOC/",
+            "batch_size": 2,
+            "crop_size": 480,
+            "val": true,
+            "split": "test_aug",
+            "num_workers": 4
+        }
+    },
+
+    "optimizer": {
+        "type": "SGD",
+        "differential_lr": true,
+        "args":{
+            "lr": 0.02,
+            "weight_decay": 1e-4,
+            "momentum": 0.9
+        }
+    },
+
+    "loss": "CrossEntropyLoss2d",
+    "ignore_index": 255,
+    "lr_scheduler": {
+        "type": "Poly",
+        "args": {}
+    },
+
+    "trainer": {
+        "epochs": 80,
+        "save_dir": "saved/",
+        "ckpt_interval": 10,
+        "grad_clip": 5,
+
+        "monitor": "max Mean_IoU",
+        "early_stop": 10,
+
+        "tensorboard": true,
+        "log_dir": "saved/runs/",
+        "log_per_iter": 20,
+
+        "val": true,
+        "val_per_epochs": 5,
+        "report_freq": 50,
+
+        "test": true,
+        "test_per_epochs": 1
+    },
+
+    "projection": {
+        "dev_resume_epoch": -1,
+        "dev_resume_log": "",
+        "edge_decision": "sgas",
+        "proj_crit_normal": "acc",
+        "proj_crit_reduce": "acc",
+        "proj_crit_edge": "acc",
+        "proj_intv": 10,
+        "proj_mode_edge": "reg"
+    },
+
+
+    "model_path": "saved_models",
+    "resume_epoch": 0,
+    "resume_expid": "",
+    "dev": "",
+    "deter": false,
+    "expid_tag": "",
+    "log_tag": "",
+    "unrolled": false,
+
+    "tune_epochs": 140,
+    "fast": false,
+
+    "cutout": false,
+    "cutout_length": 16,
+    "cutout_prob": 1.0,
+    "learning_rate_min": 0.001
+}
