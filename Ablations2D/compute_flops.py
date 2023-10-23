@@ -1,4 +1,3 @@
-import torch
 import argparse
 import sys
 sys.path.insert(0, '../../')
@@ -9,7 +8,7 @@ parser = argparse.ArgumentParser("cifar")
 parser.add_argument('--dataset', type=str, default='cifar10', help='choose dataset')
 parser.add_argument('--backbone', type=str, default='Dil_R18', help='backbone to use')
 args = parser.parse_args()
-from sota.cnn.video_network import *
+from models.video_network import *
 from bkresnets import *
 def compute_flops():
   #  import subprocess
@@ -50,9 +49,7 @@ def compute_flops():
     # elif args.backbone == 'BK_R152':
     #     model = ResNet152BK()
 
-    from thop import profile
-
-    # Create a sample input tensor
+  # Create a sample input tensor
     if args.dataset == 'cifar10':
         input_tensor = torch.randn(1, 3, 32, 32)  # Batch size, channels, height, width
         model = model(10)
@@ -71,16 +68,15 @@ def compute_flops():
 
     model= model.cuda()
     model.eval()
-    print(model)
+  #  print(model)
+    out = model(input_tensor)
     # Run the profile function to compute FLOPs
-    flops, params = profile(model, inputs=(input_tensor.cuda(),))
+  #  flops, params = profile(model, inputs=(input_tensor.cuda(),))
 
-    print(f"Number of FLOPs: {flops}")
-    print(f"Number of parameters: {params}")
+ #   print(f"Number of FLOPs: {flops}")
+ #   print(f"Number of parameters: {params}")
 
 def compute_flopFB():
-    import subprocess
-
     # Name of the package to install
   #  package_name = "fvcore"
     # Command to install the package
@@ -129,8 +125,6 @@ def compute_flopFB():
     elif args.backbone == 'BK_R152':
         model = R152_BK
 
-    from thop import profile
-
     # Create a sample input tensor
     if args.dataset == 'cifar10':
         input_tensor = torch.randn(1, 3, 32, 32)  # Batch size, channels, height, width
@@ -145,14 +139,14 @@ def compute_flopFB():
         input_tensor = torch.randn(1, 3 , 64, 64)  # Batch size, channels, height, width
         model = model(num_classes=200)
     if args.dataset == 'imagenet':
-        input_tensor = torch.randn(1, 3,224, 224)  # Batch size, channels, height, width
+        input_tensor = torch.randn(1, 3, 512, 512)  # Batch size, channels, height, width
         model = model(num_classes=1000)
 
     model= model.cuda()
     model.eval()
 
 
-    print(model)
+ #   print(model)
     flops = FlopCountAnalysis(model, input_tensor.cuda())
     print(flops.total())
 

@@ -1,5 +1,5 @@
 import torch
-from resnets import *
+from .resnets import *
 
 def ResNet18Dilated(pretrained=False, **kwargs):
     model = DRN_A(Bottleneck, [2, 2, 2, 2], **kwargs)

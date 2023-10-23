@@ -82,6 +82,7 @@ class BaseTrainer:
         if resume: self._resume_checkpoint(resume)
 
     def _get_available_devices(self, n_gpu):
+        np.random.seed(self.config['seed'])
         sys_gpu = torch.cuda.device_count()
         if sys_gpu == 0:
             self.logger.warning('No GPUs detected, using the CPU')
@@ -93,6 +94,12 @@ class BaseTrainer:
         device = torch.device('cuda:0' if n_gpu > 0 else 'cpu')
         self.logger.info(f'Detected GPUs: {sys_gpu} Requested: {n_gpu}')
         available_gpus = list(range(n_gpu))
+        # ---- added ----
+        cudnn.benchmark = True
+        torch.manual_seed(self.config['seed'])
+        cudnn.enabled = True
+        torch.cuda.manual_seed(self.config['seed'])
+        # ---- added ----
         return device, available_gpus
     
     def train(self):

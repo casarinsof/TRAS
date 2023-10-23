@@ -1,18 +1,15 @@
 import os
 import sys
-import time
 import glob
 import numpy as np
-import torch
 import nasbench201.utils as ig_utils
 import logging
 import argparse
 import shutil
-import torch.nn as nn
 import torch.utils
 import torchvision.datasets as dset
 import torch.backends.cudnn as cudnn
-from nasbench201.imageNET_loader import ImageNet
+from dataloaders.imageNET_loader import ImageNet
 from networks2d import *
 from torch.utils.tensorboard import SummaryWriter
 
