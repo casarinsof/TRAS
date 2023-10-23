@@ -22,35 +22,29 @@ from collections import OrderedDict
 #                                                          'sep_conv_3x3']])])
 
 PRIMITIVES = [
-    'vshift',
-    'hshift',
-    'zoom',
-    'rotate',
-    'vhshift',
-    'vzoom',
-    'rotzoom',
+    'noise',
+    'translate_x',
+    'translate_y',
     'pool',
-    'tralRot',
-    'TraslZoomRot'
+    'rotate',
+    'autocontrast',
+    'invert',
+    'equalize',
+    'solarize',
+    'posterize',
+    'contrast',
+    'brightness',
+    'sharpness',
+    'color',
+    'shear_xy',
+  #  'cutout',
 ]
 
-PRIMITIVESs6 = [
-    'vshift',
-    'hshift',
-    'zoom',
-    'rotate',
-    'vhshift',
-    'vzoom',
-    'rotzoom',
-    'tralRot',
-    'TraslZoomRot'
-]
 
 primitives_5 = OrderedDict([('primitives_normal', 1 * [PRIMITIVES])])
 
-primitives_6 = OrderedDict([('primitives_normal', 1 * [PRIMITIVESs6])])
 
 spaces_dict = {
     's5': primitives_5,
-    's6': primitives_6,
+
 }

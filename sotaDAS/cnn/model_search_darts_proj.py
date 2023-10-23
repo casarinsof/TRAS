@@ -1,15 +1,15 @@
 import torch
 from copy import deepcopy
 
-from sota.cnn.operations import *
-from sota.cnn.genotypes import Genotype
+from sotaDAS.cnn.operations import *
+from sotaDAS.cnn.genotypes import Genotype
 import sys
 sys.path.insert(0, '../../')
-from sota.cnn.model_search import Network
+from sotaDAS.cnn.model_search import Network
 
 class DartsNetworkProj(Network):
     def __init__(self, C, num_classes, layers, criterion, primitives, args,
-                 steps=1, multiplier=4, stem_multiplier=3, drop_path_prob=0.0):
+                 steps=4, multiplier=4, stem_multiplier=3, drop_path_prob=0.0):
         super(DartsNetworkProj, self).__init__(C, num_classes, layers, criterion, primitives, args,
               steps=steps, multiplier=multiplier, stem_multiplier=stem_multiplier, drop_path_prob=drop_path_prob)
         

@@ -1,536 +1,219 @@
 import torch
 import torch.nn as nn
+import torchvision.transforms.v2 as v2
 from torch.autograd import Variable
-from torchvision.transforms.functional import affine, resize
-import torch.nn.functional as F
-import matplotlib.pyplot as plt
+import numpy as np
+import random
 import torchvision.transforms.functional as tf
 OPS = {
-    'noise': lambda stride, num_frames, shift_amount,  zoom_factor, rotation_angle, outsize: NoiseOp(stride, 0., 1.),
-    'none': lambda stride, num_frames, shift_amount,  zoom_factor, rotation_angle,outsize: Zero(stride),
-    'vshift': lambda stride, num_frames, shift_amount, zoom_factor, rotation_angle, outsize: ImageToVerticalShiftVideoLayer(num_frames,
-                                                                                                                            outsize  ),
-    'hshift': lambda stride, num_frames, shift_amount, zoom_factor, rotation_angle, outsize: ImageToHorizontalShiftVideoLayer(
-        num_frames,outsize),
-    'zoom': lambda stride, num_frames, shift_amount, zoom_factor, rotation_angle, outsize: ImageToZoomVideoLayer(num_frames,
-                                                                                                                 zoom_factor,
-                                                                                                                 outsize),
-    'rotate': lambda stride, num_frames, shift_amount, zoom_factor, rotation_angle, outsize: ImageToRotationVideoLayer(
-        num_frames,
-        rotation_angle,outsize),
-    'vhshift' : lambda stride, num_frames, shift_amount, zoom_factor, rotation_angle, outsize: VerHor(num_frames, outsize),
-    'vzoom': lambda stride, num_frames, shift_amount, zoom_factor, rotation_angle,outsize: VerZoom(num_frames, zoom_factor,
-                                                                                                   outsize),
-    'rotzoom': lambda stride, num_frames, shift_amount, zoom_factor, rotation_angle, outsize: RotZoom(num_frames, zoom_factor,
-                                                                                             rotation_angle,outsize ),
-    'pool': lambda stride, num_frames, shift_amount, zoom_factor, rotation_angle, outsize: Pool(num_frames, outsize),
-    'tralRot': lambda stride, num_frames, shift_amount, zoom_factor, rotation_angle, outsize: TraslRot(num_frames, rotation_angle,
-                                                                                                       outsize),
-    'TraslZoomRot': lambda stride, num_frames, shift_amount, zoom_factor, rotation_angle, outsize: TraslRotZoom(num_frames,
-                                                                                                       zoom_factor,
-                                                                                                       rotation_angle,
-                                                                                                                outsize),
+    'noise': lambda stride, outsize: NoiseOp(stride, 0., 1.),
+    'none': lambda stride, outsize: Identity(),
+    'translate_x': lambda stride, outsize: Traslate_X(outsize),
+    'translate_y': lambda stride, outsize: Traslate_Y(outsize),
+    'pool': lambda stride, outsize: Pool(outsize),
+    'rotate': lambda stride, outsize: Rotate(outsize),
+    'autocontrast': lambda stride, outsize: AutoContrast(outsize),
+    'invert': lambda  stride, outsize: Invert(outsize),
+    'equalize': lambda stride, outsize: Equalize(outsize),
+    'solarize': lambda stride, outsize: Solarize(outsize),
+    'posterize': lambda stride, outsize: Posterize(outsize),
+    'contrast': lambda stride, outsize: Contrast(outsize),
+    'brightness': lambda stride, outsize: Brightness(outsize),
+    'sharpness': lambda stride, outsize: Sharpness(outsize),
+    'color': lambda stride, outsize: Color(),
+    'shear_xy': lambda stride, outsize: Shear_XY(),
+    'cutout': lambda stride, outsize: Cutout(),
 }
 
 class Pool(nn.Module):
-    def __init__(self, num_frames, outsize=(64,64)):
+    def __init__(self, outsize=(64,64)):
         super(Pool, self).__init__()
-        self.num_frames = num_frames
         self.pool = nn.MaxPool2d(2)
         self.output_size = outsize
     def forward(self, x):
         batch_size, channels, height, width = x.size()
-        video = torch.zeros((batch_size, channels, self.num_frames) + self.output_size).cuda()
         pad_top = (self.output_size[0] - height) // 2
         pad_left = (self.output_size[1] - width) // 2
 
-        # Pad the resized image to match the original shape
-        x_padded = tf.pad(x, padding=[pad_left, pad_top], padding_mode='constant')
-        video[:, :, 0, :, :] = x_padded
         x_pooled = x
-        for t in range(1, self.num_frames):
-            x_pooled = self.pool(x_pooled)
 
-            _, _,  height, width = x_pooled.size()
+        x_pooled = self.pool(x_pooled)
 
-            pad_top = (self.output_size[0] - height) // 2
-            pad_bottom = self.output_size[0] - height - pad_top
-            pad_left = (self.output_size[1] - width) // 2
-            pad_right = self.output_size[1] - width - pad_left
-            x_padded = tf.pad(x_pooled, padding=[pad_left,pad_top, pad_right, pad_bottom,], padding_mode='constant')
-            video[:, :, t, :, :] = x_padded
-
-        return video
-
-class VerZoom(nn.Module):
-    def __init__(self, num_frames, zoom_factor, outsize=(64,64)):
-        super(VerZoom, self).__init__()
-        self.num_frames = num_frames
-        self.zoom_factor = zoom_factor
-        self.output_size = outsize
-        self.zoom = ImageToZoomVideoLayer(num_frames=self.num_frames, zoom_factor=-0.2, outsize=(48, 48))
-        self.vert = ImageToVerticalShiftVideoLayer(num_frames=1, outsize=outsize)
-    def forward(self, x):
-        batch_size, channels, height, width = x.size()
-        video = torch.zeros((batch_size, channels, self.num_frames) + self.output_size).cuda()
-        zoomed_video = self.zoom(x).permute(2,0,1,3,4)
-
-        shift_amounts = [int(t / self.num_frames * 2 * 24 ) for t in range(self.num_frames)]
-        inv = 1
-        rev_inv=0
-        for t in range(self.num_frames):
-            img = zoomed_video[t]
-            batch_size, channels, height, width = img.size()
-
-            shift_amount = shift_amounts[t]
-            pad_top = (self.output_size[0] - height - shift_amount) // 2
-            pad_bottom = self.output_size[0] - height - pad_top
-
-            if pad_top < 0:
-                if t-inv < 0:
-                    rev_inv +=1
-                    shift_amount = shift_amounts[rev_inv]
-                    inv += 1
-                    pad_top = (self.output_size[0] - height - shift_amount) // 2
-                    pad_bottom = self.output_size[0] - height - pad_top
-                else:
-                    shift_amount = shift_amounts[t - inv]
-                    inv +=2
-                    pad_top = (self.output_size[0] - height - shift_amount) // 2
-                    pad_bottom = self.output_size[0] - height - pad_top
-            pad_left = (self.output_size[1] - width) // 2
-            pad_right = self.output_size[1] - width - pad_left
-
-            shifted_image = tf.pad(img, padding=[pad_top, pad_left, pad_bottom, pad_right], padding_mode='constant')
-
-            video[:, :, t, :, :] = shifted_image
-
-        return video
-
-class VerHor(nn.Module):
-    def __init__(self, num_frames, outsize=(64,64)):
-        super(VerHor, self).__init__()
-        self.num_frames = num_frames
-        self.output_size = outsize # faccio misure intermedie
-        self.horiz = ImageToHorizontalShiftVideoLayer(num_frames=self.num_frames, outsize=(96,96)) # from here they exit as (batch, channel, time, width, height)
-        self.vert = ImageToVerticalShiftVideoLayer(num_frames=1, outsize=outsize) # because I will shift every image obtained from application of prev layer
-
-    def forward(self, x):
-        batch_size, channels, height, width = x.size()
-        video = torch.zeros((batch_size, channels, self.num_frames) + self.output_size).cuda()
-        hor_video = self.horiz(x)
-        hor_video = hor_video.permute(2, 0, 1, 3, 4)
-        # devo fare qua shift amount
-        shift_amounts = [int(t / self.num_frames * 2 * 24 ) for t in range(self.num_frames)]
-        inv = 1
-        for t in range(self.num_frames):
-            img = hor_video[t]
-            batch_size, channels, height, width = img.size()
-
-            shift_amount = shift_amounts[t]
-            pad_top = (self.output_size[0] - height - shift_amount) // 2
-            pad_bottom = self.output_size[0] - height - pad_top
-            if pad_top < 0:
-                shift_amount = shift_amounts[t - inv]
-                inv += 2
-                pad_top = (self.output_size[0] - height - shift_amount) // 2
-                pad_bottom = self.output_size[0] - height - pad_top
-            pad_left = (self.output_size[1] - width) // 2
-            pad_right = self.output_size[1] - width - pad_left
-
-            shifted_image = tf.pad(img, padding=[pad_top, pad_left, pad_bottom, pad_right], padding_mode='constant')
-
-            video[:, :, t, :, :] = shifted_image
-        return video
-
-
-class TraslRot(nn.Module):
-    def __init__(self, num_frames, rotation_angle, outsize=(64,64)):
-        super(TraslRot, self).__init__()
-        self.num_frames = num_frames
-        self.output_size = outsize
-        self.rotation_angle = rotation_angle
-
-    def forward(self, x):
-        batch_size, channels, height, width = x.size()
-        video = torch.zeros((batch_size, channels, self.num_frames) + self.output_size).cuda()
+        _, _,  height, width = x_pooled.size()
 
         pad_top = (self.output_size[0] - height) // 2
+        pad_bottom = self.output_size[0] - height - pad_top
         pad_left = (self.output_size[1] - width) // 2
+        pad_right = self.output_size[1] - width - pad_left
+        x_padded = tf.pad(x_pooled, padding=[pad_left,pad_top, pad_right, pad_bottom,], padding_mode='constant')
 
-        # Pad the resized image to match the original shape
-        x_padded = tf.pad(x, padding=[pad_left, pad_top], padding_mode='constant')
-        video[:, :, 0, :, :] = x_padded
 
-        # Compute the rotation angles for each frame
-        rotation_angles = [self.rotation_angle * i for i in range(self.num_frames)]
-        shift_up = [int(t / self.num_frames * 2 * height) for t in range(self.num_frames)]
-        shift_left = [int(t / self.num_frames * 2 * height) for t in range(self.num_frames)]
+        return x_padded
 
-        invU, rev_invU, invL, rev_invL= 1, 0, 1, 0
-        for t in range(1, self.num_frames):
 
-            up = shift_up[t]
-            left = shift_left[t]
-            angle = rotation_angles[t]
-            pad_top = (self.output_size[0] - height - up) // 2
-            pad_bottom = self.output_size[0] - height - pad_top
+class Traslate_X(nn.Module):
+    def __init__(self, outsize=(64,64)):
+        super(Traslate_X, self).__init__()
 
-            pad_left = (self.output_size[0] - width - left) // 2
-            pad_right = self.output_size[1] - width - pad_left
-
-            if pad_top < 0:
-                if t - invU < 0:
-                    rev_invU += 1
-                    up = shift_up[rev_invU]
-                    invU += 1
-                    pad_top = (self.output_size[0] - height - up) // 2
-                    pad_bottom = self.output_size[0] - height - pad_top
-                else:
-                    up = shift_up[t - invU]
-                    invU += 2
-                    pad_top = (self.output_size[0] - height - up) // 2
-                    pad_bottom = self.output_size[0] - height - pad_top
-            if pad_left < 0:
-                if t - invL < 0:
-                    rev_invL += 1
-                    left = shift_left[rev_invL]
-                    invL += 1
-                    pad_left = (self.output_size[0] - width - left) // 2
-                    pad_right = self.output_size[0] - width - pad_left
-                else:
-                    left = shift_left[t - invL]
-                    invL += 2
-                    pad_left = (self.output_size[0] - width - left) // 2
-                    pad_right = self.output_size[0] - width - pad_left
-
-            shifted_image = tf.pad(x, padding=[pad_top, pad_left, pad_bottom, pad_right], padding_mode='constant')
-            rotated_image = affine(shifted_image, angle=angle, translate=(0, 0), scale=1, shear=0)
-
-            video[:, :, t, :, :] = rotated_image
-
-        return video
-
-class TraslRotZoom(nn.Module):
-    def __init__(self, num_frames, zoom_step, rotation_angle, outsize=(64,64)):
-        super(TraslRotZoom, self).__init__()
-        self.num_frames = num_frames
         self.output_size = outsize
-        self.zoom_factor = 1
-        self.rotation_angle = rotation_angle
-        self.zoom_step = zoom_step
+        self.t = v2.RandomAffine(degrees=0, translate=(0.45, 0))
 
     def forward(self, x):
-        batch_size, channels, height, width = x.size()
-        video = torch.zeros((batch_size, channels, self.num_frames) + self.output_size).cuda()
-        zoom_values = []
+        return self.t(x)
 
-        pad_top = (self.output_size[0] - height) // 2
-        pad_left = (self.output_size[1] - width) // 2
+class Traslate_Y(nn.Module):
+    def __init__(self, outsize=(64,64)):
+        super(Traslate_Y, self).__init__()
 
-        # Pad the resized image to match the original shape
-        x_padded = tf.pad(x, padding=[pad_left, pad_top], padding_mode='constant')
-        video[:, :, 0, :, :] = x_padded
-
-        # Compute the rotation angles for each frame
-        rotation_angles = [self.rotation_angle * i for i in range(self.num_frames)]
-        shift_up = [int(t / self.num_frames * 2 * height) for t in range(self.num_frames)]
-        shift_left = [int(t / self.num_frames * 3 * height) for t in range(self.num_frames)]
-
-        for i in range(self.num_frames):
-            self.zoom_factor += self.zoom_step
-            if self.zoom_factor > 1.5 or self.zoom_factor < 0.8:
-                self.zoom_step = -self.zoom_step
-            zoom_values.append(self.zoom_factor)
-
-        invU, rev_invU, invL, rev_invL = 1, 0, 1, 0
-        for t in range(1, self.num_frames):
-            zoom_value = zoom_values[t]
-            new_height = int(height * zoom_value)
-            new_width = int(width * zoom_value)
-            # resized_image = F.interpolate(x, size=(new_height, new_width), mode='bilinear', align_corners=True)
-            resized_image = tf.resize(x, size=[new_height, new_width])
-
-            up = shift_up[t]
-            left = shift_left[t]
-            angle = rotation_angles[t]
-            pad_top = (self.output_size[0] - new_height - up) // 2
-            pad_bottom = self.output_size[0] - new_height - pad_top
-
-            pad_left = (self.output_size[0] - new_width - left) // 2
-            pad_right = self.output_size[1] - new_width - pad_left
-
-            if pad_top < 0:
-                if t - invU < 0:
-                    rev_invU += 1
-                    up = shift_up[rev_invU]
-                    invU += 1
-                    pad_top = (self.output_size[0] - new_height - up) // 2
-                    pad_bottom = self.output_size[0] - new_height - pad_top
-                else:
-                    up = shift_up[t - invU]
-                    invU += 2
-                    pad_top = (self.output_size[0] - new_height - up) // 2
-                    pad_bottom = self.output_size[0] - new_height - pad_top
-            if pad_left < 0:
-                if t - invL < 0:
-                    rev_invL += 1
-                    left = shift_left[rev_invL]
-                    invL += 1
-                    pad_left = (self.output_size[0] - new_width - left) // 2
-                    pad_right = self.output_size[0] - new_width - pad_left
-                else:
-                    left = shift_left[t - invL]
-                    invL += 2
-                    pad_left = (self.output_size[0] - new_width - left) // 2
-                    pad_right = self.output_size[0] - new_width - pad_left
-
-            shifted_image = tf.pad(resized_image, padding=[pad_top, pad_left, pad_bottom, pad_right], padding_mode='constant')
-            rotated_image = affine(shifted_image, angle=angle, translate=(0, 0), scale=1, shear=0)
-
-            video[:, :, t, :, :] = rotated_image
-        return video
-
-class RotZoom(nn.Module):
-    def __init__(self, num_frames=10, zoom_factor=1, rotation_angle=10, outsize=(64,64)):
-        super(RotZoom, self).__init__()
-        self.num_frames = num_frames
         self.output_size = outsize
-        self.zoom_factor = 1
-        self.rotation_angle = rotation_angle
-        self.zoom_step = zoom_factor
+        self.t = v2.RandomAffine(degrees=0, translate=(0, 0.45))
 
     def forward(self, x):
-        batch_size, channels, height, width = x.size()
+        return self.t(x)
 
-        video_frames = []
-        zoom_values = []
-        # Append the original image as the first frame
-        pad_top = (self.output_size[0] - height) // 2
-        pad_left = (self.output_size[1] - width) // 2
+class Rotate(nn.Module):
+    def __init__(self, outsize=(64,64)):
+        super(Rotate, self).__init__()
 
-        # Pad the resized image to match the original shape
-        x_padded = tf.pad(x, padding=[pad_left, pad_top], padding_mode='constant')
-
-        video_frames.append(x_padded)
-
-        # Compute the rotation angles for each frame
-        rotation_angles = [self.rotation_angle * i for i in range(1, self.num_frames)]
-        for i in range(self.num_frames - 1):
-            self.zoom_factor += self.zoom_step
-            if self.zoom_factor > 1.5 or self.zoom_factor < 0.8:
-                self.zoom_step = -self.zoom_step
-            # self.zoom_factor += self.zoom_step
-            zoom_values.append(self.zoom_factor)
-
-        # Apply the rotation transformation to generate the rest of the frames
-        for t, angle in enumerate(rotation_angles):
-            zoom_value = zoom_values[t]
-            rotated_image = affine(x, angle=angle, translate=(0, 0), scale=1, shear=0)
-            new_height = int(height * zoom_value)
-            new_width = int(width * zoom_value)
-            # resized_image = F.interpolate(x, size=(new_height, new_width), mode='bilinear', align_corners=True)
-            resized_image = tf.resize(rotated_image, size=[new_height, new_width])
-            pad_top = (self.output_size[0] - new_height) // 2
-            pad_bottom = self.output_size[0] - new_height - pad_top
-            pad_left = (self.output_size[1] - new_width) // 2
-            pad_right = self.output_size[1] - new_width - pad_top
-            # Pad the resized image to match the original shape
-            zoomedRot_image = tf.pad(resized_image, padding=[pad_left, pad_top, pad_right, pad_bottom],
-                                  padding_mode='constant')
-            video_frames.append(zoomedRot_image)
-
-        # Stack the frames along the time dimension to form the video tensor
-        video = torch.stack(video_frames, dim=2)
-        return video
-
-class ImageToVerticalShiftVideoLayer(nn.Module):
-    def __init__(self, num_frames=10, outsize=(64,64)):
-        super(ImageToVerticalShiftVideoLayer, self).__init__()
-        self.num_frames = num_frames
         self.output_size = outsize
+        self.t = v2.RandomAffine(degrees=30)
 
     def forward(self, x):
-        batch_size, channels, height, width = x.size()
+        return self.t(x)
 
-        video = torch.zeros((batch_size, channels, self.num_frames) + self.output_size).cuda()
+class AutoContrast(nn.Module):
+    def __init__(self, outsize=(64,64)):
+        super(AutoContrast, self).__init__()
 
-        shift_amounts = [int(t / self.num_frames * 3 * height) for t in range(self.num_frames)]
-
-        inv = 1
-
-        for t in range(self.num_frames):
-            shift_amount = shift_amounts[t]
-            pad_top = (self.output_size[0] - height - shift_amount)//2
-            pad_bottom = self.output_size[0] - height - pad_top
-            if pad_top < 0:
-                shift_amount = shift_amounts[t - inv]
-                inv +=2
-                pad_top = (self.output_size[0] - height - shift_amount) // 2
-                pad_bottom = self.output_size[0] - height - pad_top
-
-            pad_left = (self.output_size[1] - width)//2
-            pad_right = self.output_size[1] - width - pad_left
-
-            shifted_image = tf.pad(x, padding=[pad_left, pad_top, pad_right, pad_bottom], padding_mode='constant')
-
-            video[:, :, t, :, :] = shifted_image
-
-        return video
-
-
-class ImageToHorizontalShiftVideoLayer(nn.Module):
-    def __init__(self, num_frames=10, outsize=(64,64)):
-        super(ImageToHorizontalShiftVideoLayer, self).__init__()
-        self.num_frames = num_frames
         self.output_size = outsize
-
-
-    def forward(self, x, shift=None):
-        batch_size, channels, height, width = x.size()
-
-        video = torch.zeros((batch_size, channels, self.num_frames) + self.output_size).cuda()
-        if shift is None:
-            shift_amounts = [int(t / self.num_frames * 2 * 24) for t in range(self.num_frames)]
-        inv = 1
-        rev_inv=0
-        for t in range(self.num_frames):
-            shift_amount = shift_amounts[t]
-            pad_left = (self.output_size[0] - width - shift_amount)//2
-            pad_right = self.output_size[0] - width - pad_left
-            if pad_left < 0:
-                if t-inv < 0:
-                    rev_inv +=1
-                    shift_amount = shift_amounts[rev_inv]
-                    inv += 1
-                    pad_left = (self.output_size[0] - width - shift_amount) // 2
-                    pad_right = self.output_size[0] - width - pad_left
-                else:
-                    shift_amount = shift_amounts[t - inv]
-                    inv +=2
-                    pad_left = (self.output_size[0] - width - shift_amount) // 2
-                    pad_right = self.output_size[0] - width - pad_left
-
-
-            pad_top = (self.output_size[1] - height)//2
-            pad_bottom = self.output_size[1] - height - pad_top
-
-            shifted_image = tf.pad(x, padding=[pad_top, pad_left, pad_bottom, pad_right], padding_mode='constant')
-
-            video[:, :, t, :, :] = shifted_image
-
-        return video
-
-
-class ImageToZoomVideoLayer(nn.Module):
-    def __init__(self, num_frames, zoom_factor, outsize=(64,64)):
-        super(ImageToZoomVideoLayer, self).__init__()
-        self.num_frames = num_frames
-        self.zoom_step = zoom_factor
-        self.output_size = outsize
-        self.zoom_factor = 1
-
+        self.t = v2.RandomAutocontrast()
 
     def forward(self, x):
-        # Resize the input image to a fixed size before applying zoom transformation
-        batch_size, channels, height, width = x.size()
+        return self.t(x)
 
-        # Initialize an empty list to store the video frames
-        video_frames = []
-        zoom_values = []
-        # Append the original image as the first frame
-        pad_top = (self.output_size[0] - height) // 2
-        pad_left = (self.output_size[1] - width) // 2
+class Invert(nn.Module):
+    def __init__(self, outsize=(64,64)):
+        super(Invert, self).__init__()
 
-
-        # Pad the resized image to match the original shape
-        x_padded = tf.pad(x, padding=[pad_left, pad_top], padding_mode='constant')
-
-
-        video_frames.append(x_padded)
-
-        for i in range(self.num_frames-1):
-            self.zoom_factor += self.zoom_step
-            if self.zoom_factor > 1.5 or self.zoom_factor < 0.8:
-                self.zoom_step = -self.zoom_step
-            #self.zoom_factor += self.zoom_step
-            zoom_values.append(self.zoom_factor)
-
-        # Apply the zoom transformation to generate the rest of the frames
-
-        for zoom_value in zoom_values:
-            new_height = int(height * zoom_value)
-            new_width = int(width * zoom_value)
-           # resized_image = F.interpolate(x, size=(new_height, new_width), mode='bilinear', align_corners=True)
-            resized_image = tf.resize(x, size=[new_height, new_width])
-
-            pad_top = (self.output_size[0] - new_height)//2
-            pad_bottom = self.output_size[0] - new_height - pad_top
-            pad_left = (self.output_size[1] - new_width)//2
-            pad_right = self.output_size[1] - new_width - pad_top
-
-            # Pad the resized image to match the original shape
-            zoomed_image = tf.pad(resized_image, padding=[pad_left, pad_top, pad_right, pad_bottom], padding_mode='constant')
-
-            video_frames.append(zoomed_image)
-
-        # Stack the frames along the time dimension to form the video tensor
-        video = torch.stack(video_frames, dim=2)
-
-        return video
-
-
-
-class ImageToRotationVideoLayer(nn.Module):
-    def __init__(self, num_frames, rotation_angle, outsize=(64,64)):
-        super(ImageToRotationVideoLayer, self).__init__()
-        self.num_frames = num_frames
-        self.rotation_angle = rotation_angle
         self.output_size = outsize
+        self.t = v2.RandomInvert()
 
     def forward(self, x):
-        # Initialize an empty list to store the video frames
-        video_frames = []
-        batch_size, channels, height, width = x.size()
+        return self.t(x)
 
-        # Append the original image as the first frame
-        # Append the original image as the first frame
-        pad_top = (self.output_size[0] - height) // 2
-        pad_left = (self.output_size[1] - width) // 2
-        x_padded = tf.pad(x, padding=[pad_left, pad_top], padding_mode='constant', fill=-1)
-        video_frames.append(x_padded)
+class Equalize(nn.Module):
+    def __init__(self, outsize=(64,64)):
+        super(Equalize, self).__init__()
 
-        # Compute the rotation angles for each frame
-        rotation_angles = [self.rotation_angle * i for i in range(1, self.num_frames)]
+        self.output_size = outsize
+        self.t = v2.RandomEqualize()
 
-        # Apply the rotation transformation to generate the rest of the frames
-        for angle in rotation_angles:
-            rotated_image = affine(x, angle=angle, translate=(0, 0), scale=1, shear=0)
-            # Calculate the padding required to restore the original shape
-            pad_top = (self.output_size[0] - height)//2
-            pad_bottom = self.output_size[0] - height - pad_top
-            pad_left = (self.output_size[1] - width)//2
-            pad_right = self.output_size[1] - width - pad_top
-            rotated_image = tf.pad(rotated_image, padding=[pad_left, pad_top, pad_right, pad_bottom],
-                                  padding_mode='constant', fill=-1)
-            video_frames.append(rotated_image)
+    def forward(self, x):
+        return self.t(x)
 
-        # Stack the frames along the time dimension to form the video tensor
-        video = torch.stack(video_frames, dim=2)
+class Solarize(nn.Module):
+    def __init__(self, outsize=(64,64)):
+        super(Solarize, self).__init__()
 
-        return video
+        self.output_size = outsize
+        self.t = v2.RandomSolarize(threshold=0.256)
+
+    def forward(self, x):
+        return self.t(x)
+
+class Posterize(nn.Module):
+    def __init__(self, outsize=(64,64)):
+        super(Posterize, self).__init__()
+
+        self.output_size = outsize
+        self.t = v2.RandomPosterize(bits=4)
+
+    def forward(self, x):
+        return self.t(x)
+
+class Contrast(nn.Module):
+    def __init__(self, outsize=(64,64)):
+        super(Contrast, self).__init__()
+
+        self.output_size = outsize
+        self.t = v2.ColorJitter(contrast=(0.1, 1.9))
+
+    def forward(self, x):
+        return self.t(x)
+
+class Brightness(nn.Module):
+    def __init__(self, outsize=(64,64)):
+        super(Brightness, self).__init__()
+
+        self.output_size = outsize
+        self.t = v2.ColorJitter(brightness=(0.1, 1.9))
+
+    def forward(self, x):
+        return self.t(x)
+
+class Sharpness(nn.Module):
+    def __init__(self, outsize=(64,64)):
+        super(Sharpness, self).__init__()
+
+        self.output_size = outsize
+        self.t = v2.RandomAdjustSharpness(random.uniform(0.1, 1.9))
+
+    def forward(self, x):
+        return self.t(x)
+
+class Color(nn.Module):
+    def __init__(self, outsize=(64,64)):
+        super(Color, self).__init__()
+
+        self.output_size = outsize
+        self.t = v2.ColorJitter(saturation=(0.1, 1.9))
+
+    def forward(self, x):
+        return self.t(x)
+
+class Shear_XY(nn.Module):
+    def __init__(self, outsize=(64,64)):
+        super(Shear_XY, self).__init__()
+
+        self.output_size = outsize
+        self.t = v2.RandomAffine(degrees=0, shear=[-0.3, 0.3, -0.3, 0.3])
+
+    def forward(self, x):
+        return self.t(x)
 
 
+class Cutoutclass(object):
+    def __init__(self, length, prob=1.0):
+        self.length = length
+        self.prob = prob
 
+    def __call__(self, img):
+        if np.random.binomial(1, self.prob):
+            h, w = img.size(1), img.size(2)
+            mask = np.ones((h, w), np.float32)
+            y = np.random.randint(h)
+            x = np.random.randint(w)
 
+            y1 = np.clip(y - self.length // 2, 0, h)
+            y2 = np.clip(y + self.length // 2, 0, h)
+            x1 = np.clip(x - self.length // 2, 0, w)
+            x2 = np.clip(x + self.length // 2, 0, w)
 
+            mask[y1: y2, x1: x2] = 0.
+            mask = torch.from_numpy(mask)
+            mask = mask.expand_as(img)
+            img *= mask
+        return img
 
+class Cutout(nn.Module):
+    def __init__(self, outsize=(64,64)):
+        super(Cutout, self).__init__()
 
+        self.output_size = outsize
+        self.t = Cutoutclass(length=6)
 
-
-
-
-
+    def forward(self, x):
+        return self.t(x)
 
 
 class NoiseOp(nn.Module):
@@ -550,52 +233,6 @@ class NoiseOp(nn.Module):
         return noise
 
 
-class ReLUConvBN(nn.Module):
-
-    def __init__(self, C_in, C_out, kernel_size, stride, padding, affine=True):
-        super(ReLUConvBN, self).__init__()
-        self.op = nn.Sequential(
-            nn.ReLU(inplace=False),
-            nn.Conv2d(C_in, C_out, kernel_size, stride=stride, padding=padding, bias=False),
-            nn.BatchNorm2d(C_out, affine=affine)
-        )
-
-    def forward(self, x):
-        return self.op(x)
-
-
-class DilConv(nn.Module):
-
-    def __init__(self, C_in, C_out, kernel_size, stride, padding, dilation, affine=True):
-        super(DilConv, self).__init__()
-        self.op = nn.Sequential(
-            nn.ReLU(inplace=False),
-            nn.Conv2d(C_in, C_in, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation,
-                      groups=C_in, bias=False),
-            nn.Conv2d(C_in, C_out, kernel_size=1, padding=0, bias=False),
-            nn.BatchNorm2d(C_out, affine=affine),
-        )
-
-    def forward(self, x):
-        return self.op(x)
-
-
-class SepConv(nn.Module):
-    def __init__(self, C_in, C_out, kernel_size, stride, padding, affine=True):
-        super(SepConv, self).__init__()
-        self.op = nn.Sequential(
-            nn.ReLU(inplace=False),
-            nn.Conv2d(C_in, C_in, kernel_size=kernel_size, stride=stride, padding=padding, groups=C_in, bias=False),
-            nn.Conv2d(C_in, C_in, kernel_size=1, padding=0, bias=False),
-            nn.BatchNorm2d(C_in, affine=affine),
-            nn.ReLU(inplace=False),
-            nn.Conv2d(C_in, C_in, kernel_size=kernel_size, stride=1, padding=padding, groups=C_in, bias=False),
-            nn.Conv2d(C_in, C_out, kernel_size=1, padding=0, bias=False),
-            nn.BatchNorm2d(C_out, affine=affine),
-        )
-
-    def forward(self, x):
-        return self.op(x)
 
 
 class Identity(nn.Module):
@@ -607,64 +244,3 @@ class Identity(nn.Module):
         return x
 
 
-class Zero(nn.Module):
-
-    def __init__(self, stride):
-        super(Zero, self).__init__()
-        self.stride = stride
-
-    def forward(self, x):
-        if self.stride == 1:
-            return x.mul(0.)
-        return x[:, :, ::self.stride, ::self.stride].mul(0.)
-
-
-class FactorizedReduce(nn.Module):
-
-    def __init__(self, C_in, C_out, affine=True):
-        super(FactorizedReduce, self).__init__()
-        assert C_out % 2 == 0
-        self.relu = nn.ReLU(inplace=False)
-        self.conv_1 = nn.Conv2d(C_in, C_out // 2, 1, stride=2, padding=0, bias=False)
-        self.conv_2 = nn.Conv2d(C_in, C_out // 2, 1, stride=2, padding=0, bias=False)
-        self.bn = nn.BatchNorm2d(C_out, affine=affine)
-
-    def forward(self, x):
-        x = self.relu(x)
-        out = torch.cat([self.conv_1(x), self.conv_2(x[:, :, 1:, 1:])], dim=1)
-        out = self.bn(out)
-        return out
-
-
-#### operations with skip
-class DilConvSkip(nn.Module):
-    def __init__(self, C_in, C_out, kernel_size, stride, padding, dilation, affine=True):
-        super(DilConvSkip, self).__init__()
-        self.op = nn.Sequential(
-            nn.ReLU(inplace=False),
-            nn.Conv2d(C_in, C_in, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation,
-                      groups=C_in, bias=False),
-            nn.Conv2d(C_in, C_out, kernel_size=1, padding=0, bias=False),
-            nn.BatchNorm2d(C_out, affine=affine),
-        )
-
-    def forward(self, x):
-        return self.op(x) + x
-
-
-class SepConvSkip(nn.Module):
-    def __init__(self, C_in, C_out, kernel_size, stride, padding, affine=True):
-        super(SepConvSkip, self).__init__()
-        self.op = nn.Sequential(
-            nn.ReLU(inplace=False),
-            nn.Conv2d(C_in, C_in, kernel_size=kernel_size, stride=stride, padding=padding, groups=C_in, bias=False),
-            nn.Conv2d(C_in, C_in, kernel_size=1, padding=0, bias=False),
-            nn.BatchNorm2d(C_in, affine=affine),
-            nn.ReLU(inplace=False),
-            nn.Conv2d(C_in, C_in, kernel_size=kernel_size, stride=1, padding=padding, groups=C_in, bias=False),
-            nn.Conv2d(C_in, C_out, kernel_size=1, padding=0, bias=False),
-            nn.BatchNorm2d(C_out, affine=affine),
-        )
-
-    def forward(self, x):
-        return self.op(x) + x

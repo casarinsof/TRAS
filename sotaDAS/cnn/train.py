@@ -1,7 +1,6 @@
 import os
 import sys
 sys.path.insert(0, '../../')
-import time
 import glob
 import numpy as np
 import torch
@@ -13,9 +12,8 @@ import torch.nn as nn
 import torch.utils
 import torchvision.datasets as dset
 import torch.backends.cudnn as cudnn
-import sota.cnn.genotypes as genotypes
-from nasbench201.imageNET_loader import ImageNet
-from sota.cnn.model import Network
+from dataloaders.imageNET_loader import ImageNet
+from sotaDAS.cnn.model import Network
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -28,7 +26,7 @@ parser.add_argument('--batch_size', type=int, default=96, help='batch size')
 parser.add_argument('--search_space', type=str, default='s5', help='searching space to choose from')
 parser.add_argument('--learning_rate', type=float, default=0.025, help='init learning rate')
 parser.add_argument('--momentum', type=float, default=0.9, help='momentum')
-parser.add_argument('--weight_decay', type=float, default=3e-4, help='weight decay')
+parser.add_argument('--weight_decay', type=float, default=8e-3, help='weight decay')
 parser.add_argument('--report_freq', type=float, default=50, help='report frequency')
 parser.add_argument('--gpu', type=str, default='auto', help='gpu device id')
 parser.add_argument('--epochs', type=int, default=600, help='num of training epochs')
@@ -171,7 +169,7 @@ def main():
 
   #  scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
    #     optimizer, float(args.epochs))
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 30, gamma=0.2)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 30, gamma=0.1)
 
 
     #### resume

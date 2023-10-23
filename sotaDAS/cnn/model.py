@@ -1,51 +1,27 @@
 import torch
 import torch.nn as nn
+import torchvision.models
 
-from sota.cnn.operations import *
+from sotaDAS.cnn.operations import *
 import sys
 sys.path.insert(0, '../../')
-from nasbench201.utils import drop_path
-from video_network import VideoResnet18 as resnet18
-from video_network import VideoResnet101 as resnet101
-from video_network import VideoResnet152 as resnet152
-
-
-class L2NormLayer(nn.Module):
-    def __init__(self, num_channels):
-        super(L2NormLayer, self).__init__()
-        self.scale = nn.Parameter(torch.ones(1, num_channels, 1, 1))  # Learnable scaling parameter
-
-    def forward(self, x):
-        # Calculate L2 norm along the channel dimension
-        l2_norm = torch.norm(x, p=2, dim=1, keepdim=True)
-        # Apply learnable scaling
-        normalized_features = x / (l2_norm + 1e-5)  # Adding epsilon to avoid division by zero
-        normalized_features = normalized_features * self.scale
-        return normalized_features
+from torchvision.models import resnet18, resnet50, resnet152, resnet101
+from Ablations2D.networks2d import ResNet50Dilated
 
 class Cell(nn.Module):
 
-    def __init__(self, genotype,  num_segments, num_classes):
+    def __init__(self, genotype,  num_classes):
         super(Cell, self).__init__()
-        self.shift_amount = 1 #amount of shift in pixels
-        self.zoom_factor = -0.2
-        self.rotation_angle = 5
-        self.num_frames = num_segments
+
 
         self.num_classes = num_classes
         if self.num_classes == 10 or self.num_classes == 100:
-            self.outsize = (64,64)
+            self.outsize = (32,32)
         elif self.num_classes == 200:
-            self.outsize = (128, 128)
+            self.outsize = (64,64)
         elif self.num_classes == 1000:
-            self.outsize = (224, 224)
+            self.outsize = (224,224)
 
-        #self.preprocess1 = ReLUConvBN(C_prev, C, 1, 1, 0) #todo solo se volessi applicare trasformazioni a features e non ha pixels
-
-
-
-      #  op_names, indices = zip(*genotype.reduce) #todo cosa succede se chiamo questi? non dovrebbe piu esserci reduce...
-      #  concat = genotype.reduce_concat
 
         op_names, indices = zip(*genotype.normal)
         concat = genotype.normal_concat
@@ -60,7 +36,7 @@ class Cell(nn.Module):
         self._ops = nn.ModuleList()
         for name, index in zip(op_names, indices):
             stride = 1
-            op = OPS[name](stride, self.num_frames, self.shift_amount, self.zoom_factor, self.rotation_angle, self.outsize)
+            op = OPS[name](stride, self.outsize)
             self._ops += [op]
             print(self._ops)
         self._indices = indices
@@ -69,18 +45,13 @@ class Cell(nn.Module):
 
 
         states = [s0]
-       # for i in range(self._steps):
+
         h1 = states[self._indices[0]] #todo vedere che succede
-  #      h2 = states[self._indices[1]]
+
         op1 = self._ops[2*0]
-     #   op2 = self._ops[2*i+1]
+
         h1 = op1(h1)
-     #   h2 = op2(h2)
-    #    if self.training and drop_prob > 0.:
-        #    if not isinstance(op1, Identity):
-           #     h1 = drop_path(h1, drop_prob)
-          #  if not isinstance(op2, Identity):
-           #     h2 = drop_path(h2, drop_prob)
+
         s = h1 #+ h2
         states += [s]
 
@@ -117,12 +88,8 @@ class Network(nn.Module):
         super(Network, self).__init__()
         self._layers = layers
         self._auxiliary = auxiliary
-        # todo rimettilo a 16
-        if args.search_space == 's5':
-            self.num_segments = 3
-        elif args.search_space == 's6':
-            self.num_segments = 8
-        self._steps = 1
+
+
 
        # self.stem = nn.Sequential(
          #   nn.Conv2d(3, C_curr, 3, padding=1, bias=False),
@@ -133,18 +100,24 @@ class Network(nn.Module):
 
         self.cells = nn.ModuleList()
 
-        cell = Cell(genotype,  self.num_segments, num_classes)
+        cell = Cell(genotype, num_classes)
 
-        self.norm = L2NormLayer(num_channels=3)
+
 
         self.cells += [cell]
 
         if args.backbone == 'resnet18':
-            self.net = resnet18(False, num_classes, self.num_segments).cuda()
+            self.net = resnet18(False, num_classes).cuda()
+        if args.backbone == 'resnet50':
+            self.net = resnet50(False, num_classes).cuda()
+        if args.backbone == 'wideRes-50-2':
+            self.net = torchvision.models.wide_resnet50_2(pretrained=False).cuda()
+        if args.backbone == 'Dil_R50':
+            self.net = ResNet50Dilated(False, num_classes=num_classes).cuda()
         if args.backbone == 'resnet101':
-            self.net = resnet101(False, num_classes, self.num_segments).cuda()
+            self.net = resnet101(False, num_classes).cuda()
         if args.backbone == 'resnet152':
-            self.net = resnet152(False, num_classes, self.num_segments).cuda()  # this is pre trained
+            self.net = resnet152(False, num_classes).cuda()  # this is pre trained
 
 
 
@@ -155,7 +128,7 @@ class Network(nn.Module):
         cell = self.cells[0]
 
         s1 = cell(s0,  self.drop_path_prob)
-        s1 = self.norm(s1)
+     #   s1 = self.norm(s1)
         logits = self.net(s1)
 
         return logits, logits_aux

@@ -2,23 +2,22 @@ import torch.nn.functional as F
 from sota.cnn.operations import *
 from sota.cnn.genotypes import Genotype
 import sys
+
 sys.path.insert(0, '../../')
 from nasbench201.utils import drop_path
-from video_network import ResNet18 as resnet18
-from video_network import VideoResnet101 as resnet101
-
-
-
+from models.video_network import VideoResnet18 as resnet18
+from models.video_network import VideoResnet101 as resnet101
+from models.video_network import VideoResnet152 as resnet152
+from models.video_network import VideoResnet50 as resnet50
 import torch
 
 
-
 class MixedOp(nn.Module):
-    def __init__(self, stride, num_frames, shift_amount, zoom_factor, rotation_angle, PRIMITIVES):
+    def __init__(self, PRIMITIVES):
         super(MixedOp, self).__init__()
         self._ops = nn.ModuleList()
         for primitive in PRIMITIVES:
-            op = OPS[primitive](stride, num_frames, shift_amount, zoom_factor, rotation_angle)
+            op = OPS[primitive]()
             if 'pool' in primitive:
                 op = nn.Sequential(op)
             self._ops.append(op)
@@ -30,7 +29,7 @@ class MixedOp(nn.Module):
 
 class Cell(nn.Module):
 
-    def __init__(self, steps, multiplier, num_segments):
+    def __init__(self, steps, multiplier, num_segments, num_classes):
         """
 
         :param steps:  Number of intermediate nodes in the cell.
@@ -43,10 +42,13 @@ class Cell(nn.Module):
         """
         super(Cell, self).__init__()
         self.primitives = self.PRIMITIVES['primitives_normal']
-        self.shift_amount = 3 #amount of shift in pixels
-        self.zoom_factor = 0.2
-        self.rotation_angle = 3
-        self.num_frames= num_segments
+
+       # self.shift_amount = 2  # amount of shift in pixels
+       # self.zoom_factor = 0.2
+       # self.rotation_angle = 3
+
+        self.num_frames = num_segments
+        self.num_classes = num_classes
 
         """
         preprocess0 and preprocess1: These are the preprocessing steps applied to the input tensors s0 and s1, 
@@ -54,10 +56,7 @@ class Cell(nn.Module):
         the number of output channels (C) in the cell.
         """
 
-
-
-       # self.preprocess0 = ReLUConvBN(C_prev_prev, C, 1, 1, 0, affine=False)
-
+        # self.preprocess0 = ReLUConvBN(C_prev_prev, C, 1, 1, 0, affine=False)
 
         self._steps = steps
         self._multiplier = multiplier
@@ -68,33 +67,32 @@ class Cell(nn.Module):
         edge_index = 0
 
         for i in range(self._steps):
-            for j in range(1+i):
-                stride = 1
-                op = MixedOp(stride, self.num_frames, self.shift_amount, self.zoom_factor, self.rotation_angle,
-                             self.primitives[edge_index])
+            for j in range(i + 2):
+                op = MixedOp(self.primitives[edge_index])
                 self._ops.append(op)
                 edge_index += 1
 
-    def forward(self, s0, weights, drop_prob=0.):
-       #s0 = self.preprocess0(s0)
+    def forward(self, s0, s1, weights, drop_prob=0.):
+        # s0 = self.preprocess0(s0)
 
-        states = [s0]
+        states = [s0, s1]
         offset = 0
         for i in range(self._steps):
             if drop_prob > 0. and self.training:
-                s = sum(drop_path(self._ops[offset+j](h, weights[offset+j]), drop_prob) for j, h in enumerate(states))
+                s = sum(
+                    drop_path(self._ops[offset + j](h, weights[offset + j]), drop_prob) for j, h in enumerate(states))
             else:
-                s = sum(self._ops[offset+j](h, weights[offset+j]) for j, h in enumerate(states))
-                #s now has shape (1, 1, 16, 64, 64) so has one additional shape
+                s = sum(self._ops[offset + j](h, weights[offset + j]) for j, h in enumerate(states))
+                # s now has shape (1, 1, 16, 64, 64) so has one additional shape
             offset += len(states)
             states.append(s)
 
-        return states[1].view((-1, s0.shape[1]) + states[1].size()[-2:])
+        return  torch.cat(states[-self._multiplier:], dim=1) #states[1].view((-1, s0.shape[1]) + states[1].size()[-2:])
 
 
 class Network(nn.Module):
     def __init__(self, C, num_classes, layers, criterion, primitives, args,
-                 steps=1, multiplier=4, stem_multiplier=1, drop_path_prob=0):
+                 steps=4, multiplier=1, stem_multiplier=1, drop_path_prob=0):
         super(Network, self).__init__()
         #### original code
         self._C = C
@@ -104,27 +102,29 @@ class Network(nn.Module):
         self._steps = steps
         self._multiplier = multiplier
         self.drop_path_prob = drop_path_prob
-        self.num_segments = 5#16
-        print(self.num_segments,  'n segments perche ce pool operation')
+
+        self.num_segments = 8
+
 
         nn.Module.PRIMITIVES = primitives; self.op_names = primitives
 
-        C_curr = stem_multiplier*C
-      #  self.stem = nn.Sequential(
-      #      nn.Conv2d(3, C_curr, 3, padding=1, bias=False),
-       #     nn.BatchNorm2d(C_curr)
-       # )
-        self.stem = nn.Identity()
+        self.stem = Replicate(self.num_segments)
 
-        C_prev_prev, C_prev, C_curr = C_curr, C_curr, C
         self.cells = nn.ModuleList()
 
-        cell = Cell(steps, multiplier, self.num_segments)
+        for i in range(layers): #generalized to multiple cells (layers != 1)
+            cell = Cell(steps, multiplier, self.num_segments, num_classes)
+            self.cells += [cell]
 
 
-        self.cells += [cell]
-
-        self.net = resnet101(num_classes, self.num_segments).cuda()
+        if args.backbone == 'resnet18':
+            self.net = resnet18(False, num_classes, self.num_segments).cuda()
+        if args.backbone == 'resnet50':
+            self.net = resnet50(False, num_classes, self.num_segments).cuda()
+        if args.backbone == 'resnet101':
+            self.net = resnet101(False, num_classes, self.num_segments).cuda()
+        if args.backbone == 'resnet152':
+            self.net = resnet152(False, num_classes, self.num_segments).cuda()
 
         self._initialize_alphas()
 
@@ -135,7 +135,6 @@ class Network(nn.Module):
             args.learning_rate,
             momentum=args.momentum,
             weight_decay=args.weight_decay)
-        
 
     def reset_optimizer(self, lr, momentum, weight_decay):
         del self.optimizer
@@ -151,7 +150,8 @@ class Network(nn.Module):
         return (loss, logits) if return_logits else loss
 
     def _initialize_alphas(self):
-        k = sum(1 for i in range(self._steps) for n in range(1+i)) # 1 + i instead of 2 + i beacuse I have only one input node per cell not two
+        k = sum(1 for i in range(self._steps) for n in
+                range(2 + i))  # 1 + i instead of 2 + i beacuse I have only one input node per cell not two
         # todo print k
         num_ops = len(self.PRIMITIVES['primitives_normal'][0])
         self.num_edges = k
@@ -159,33 +159,31 @@ class Network(nn.Module):
 
         self.alphas_normal = self._initialize_alphas_numpy(k, num_ops)
 
-        self._arch_parameters = [ # must be in this order!
+        self._arch_parameters = [  # must be in this order!
             self.alphas_normal,
         ]
 
     def _initialize_alphas_numpy(self, k, num_ops):
         ''' init from specified arch '''
-        return Variable(1e-3*torch.randn(k, num_ops).cuda(), requires_grad=True)
+        return Variable(1e-3 * torch.randn(k, num_ops).cuda(), requires_grad=True)
 
     def forward(self, input):
         weights = self.get_softmax()
         weights_normal = weights['normal']
 
-        s0 = self.stem(input)
-        cell = self.cells[0]
+        s0 = s1 = self.stem(input)
+        for i, cell in enumerate(self.cells):
+            weights = weights_normal
 
-        weights = weights_normal
+            s0, s1 = s1, cell(s0, s1, weights, self.drop_path_prob)
 
-        s1 = cell(s0, weights, self.drop_path_prob)
-            
         logits = self.net(s1)
-
 
         return logits
 
     def step(self, input, target, args, shared=None):
         assert shared is None, 'gradient sharing disabled'
-        
+
         Lt, logit_t = self._loss(input, target, return_logits=True)
         Lt.backward()
 
@@ -202,14 +200,13 @@ class Network(nn.Module):
     def get_softmax(self):
         weights_normal = F.softmax(self.alphas_normal, dim=-1)
 
-        return {'normal':weights_normal}
+        return {'normal': weights_normal}
 
     def printing(self, logging, option='all'):
         weights = self.get_softmax()
         if option in ['all', 'normal']:
             weights_normal = weights['normal']
             logging.info(weights_normal)
-
 
     def arch_parameters(self):
         return self._arch_parameters
@@ -218,7 +215,7 @@ class Network(nn.Module):
         return self.parameters()
 
     def new(self):
-        model_new = Network(self._C, self._num_classes, self._layers, self._criterion, self.PRIMITIVES, self._args,\
+        model_new = Network(self._C, self._num_classes, self._layers, self._criterion, self.PRIMITIVES, self._args, \
                             drop_path_prob=self.drop_path_prob).cuda()
         for x, y in zip(model_new.arch_parameters(), self.arch_parameters()):
             x.data.copy_(y.data)
@@ -235,10 +232,10 @@ class Network(nn.Module):
 
     def genotype(self):
         def _parse(weights, normal=True):
-            PRIMITIVES = self.PRIMITIVES['primitives_normal'] ## two are equal for Darts space
+            PRIMITIVES = self.PRIMITIVES['primitives_normal']  ## two are equal for Darts space
 
             gene = []
-            n = 1
+            n = 2
             start = 0
             for i in range(self._steps):
                 end = start + n
@@ -246,8 +243,8 @@ class Network(nn.Module):
 
                 try:
                     edges = sorted(range(i + 2), key=lambda x: -max(W[x][k] for k in range(len(W[x])) if k != PRIMITIVES[x].index('none')))[:2]
-                except ValueError: # This error happens when the 'none' op is not present in the ops
-                    edges = sorted(range(i + 1), key=lambda x: -max(W[x][k] for k in range(len(W[x]))))[:2]
+                except ValueError:  # This error happens when the 'none' op is not present in the ops
+                    edges = sorted(range(i + 2), key=lambda x: -max(W[x][k] for k in range(len(W[x]))))[:2]
 
                 for j in edges:
                     k_best = None
@@ -259,23 +256,25 @@ class Network(nn.Module):
                         else:
                             if k_best is None or W[j][k] > W[j][k_best]:
                                 k_best = k
-                    gene.append((PRIMITIVES[start+j][k_best], j))
+                    gene.append((PRIMITIVES[start + j][k_best], j))
                 start = end
                 n += 1
             return gene
 
         gene_normal = _parse(F.softmax(self.alphas_normal, dim=-1).data.cpu().numpy(), True)
 
-        concat = range(2+self._steps-self._multiplier, self._steps+2)
+        concat = range(2 + self._steps - self._multiplier, self._steps + 2)
         genotype = Genotype(
             normal=gene_normal, normal_concat=concat,
         )
         return genotype
 
-if __name__=='__main__':
+
+if __name__ == '__main__':
     criterion = nn.CrossEntropyLoss()
     from sota.cnn.spaces import spaces_dict
     import argparse
+
     parser = argparse.ArgumentParser("sota")
 
     parser = argparse.ArgumentParser("sota")
@@ -337,18 +336,18 @@ if __name__=='__main__':
     parser.add_argument('--proj_mode_edge', type=str, default='reg', choices=['reg'],
                         help='edge projection evaluation mode, reg: one edge at a time')
 
-    import matplotlib.pyplot as plt
     args = parser.parse_args()
     import os
     import torchvision.datasets as datasets
     import torchvision.transforms as transforms
+
     model = Network(1, 10, 1, criterion, spaces_dict['s5'], args)
     print(model)
     dir_path = 'data/raw-data/cifar-10'
     file_name = os.path.join(dir_path)
     transform = transforms.Compose([
         transforms.ToTensor(),
-       # transforms.Normalize((0.5,), (0.5,))
+        # transforms.Normalize((0.5,), (0.5,))
     ])
     train_dataset = datasets.CIFAR10(file_name, train=True, download=True, transform=transform)
     test_dataset = datasets.CIFAR10(file_name, train=False, download=True, )
@@ -356,4 +355,4 @@ if __name__=='__main__':
     output = model(input_image).cuda()
     print(output)
 
-#plt.imshow(train_dataset[3][0].swapaxes(2,0).swapaxes(0,1))
+# plt.imshow(train_dataset[3][0].swapaxes(2,0).swapaxes(0,1))

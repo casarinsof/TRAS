@@ -16,13 +16,15 @@ import torch.backends.cudnn as cudnn
 import sota.cnn.genotypes as genotypes
 
 from sota.cnn.model import Network
-#from torch.utils.tensorboard import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 
 
 parser = argparse.ArgumentParser("cifar")
 parser.add_argument('--data', type=str, default='../../data',
                     help='location of the data corpus')
 parser.add_argument('--dataset', type=str, default='cifar10', help='choose dataset')
+parser.add_argument('--backbone', type=str, help='backbone to use')
+parser.add_argument('--search_space', type=str, default='s5', help='searching space to choose from')
 parser.add_argument('--batch_size', type=int, default=96, help='batch size')
 parser.add_argument('--learning_rate', type=float, default=0.025, help='init learning rate')
 parser.add_argument('--momentum', type=float, default=0.9, help='momentum')
@@ -70,11 +72,8 @@ if args.resume_epoch > 0: # do not delete dir if resume:
 else:
     scripts_to_save = glob.glob('*.py')
     if os.path.exists(args.save):
-        if input("WARNING: {} exists, override?[y/n]".format(args.save)) == 'y':
-            print('proceed to override saving directory')
-            shutil.rmtree(args.save)
-        else:
-            exit(0)
+        print('proceed to override saving directory')
+        shutil.rmtree(args.save)
     ig_utils.create_exp_dir(args.save, scripts_to_save=scripts_to_save)
 
 log_format = '%(asctime)s %(message)s'
@@ -84,11 +83,15 @@ log_file = 'log_resume_{}.txt'.format(args.resume_epoch) if args.resume_epoch > 
 fh = logging.FileHandler(os.path.join(args.save, log_file), mode='w')
 fh.setFormatter(logging.Formatter(log_format))
 logging.getLogger().addHandler(fh)
-#writer = SummaryWriter(args.save + '/runs')
+writer = SummaryWriter(args.save + '/runs')
 
 
 if args.dataset == 'cifar100':
     n_classes = 100
+elif args.dataset == 'tiny':
+    n_classes = 200
+elif args.dataset == 'imagenet':
+    n_classes = 1000
 else:
     n_classes = 10
 
@@ -114,7 +117,7 @@ def main():
     logging.info("args = %s", args)
     
     genotype = eval("genotypes.%s" % args.arch)
-    model = Network(args.init_channels, n_classes, args.layers, args.auxiliary, genotype)
+    model = Network(args.init_channels, n_classes, args.layers, args.auxiliary, genotype, args)
     model = model.cuda()
     
     logging.info("param size = %fMB", ig_utils.count_parameters_in_MB(model))
@@ -128,6 +131,7 @@ def main():
         weight_decay=args.weight_decay
     )
 
+    #### data
     if args.dataset == 'cifar10':
         train_transform, valid_transform = ig_utils._data_transforms_cifar10(args)
         train_data = dset.CIFAR10(root=args.data, train=True, download=True, transform=train_transform)
@@ -136,6 +140,20 @@ def main():
         train_transform, valid_transform = ig_utils._data_transforms_cifar100(args)
         train_data = dset.CIFAR100(root=args.data, train=True, download=True, transform=train_transform)
         valid_data = dset.CIFAR100(root=args.data, train=False, download=True, transform=valid_transform)
+    elif args.dataset == 'tiny':
+        dir_path = f'/data/vision_group/raw-data/{args.dataset}'
+        train_transform, valid_transform = ig_utils._data_transforms_tiny(args)
+
+        train_data = ig_utils.TinyImageNetDataset(root_dir=dir_path, mode='train', preload=False,
+                                            load_transform=None,
+                                            transform=train_transform, download=False, max_samples=None)
+        valid_data = ig_utils.TinyImageNetDataset(root_dir=dir_path, mode='val', preload=False,
+                                           load_transform=None,
+                                           transform=valid_transform, download=False, max_samples=None)
+
+    elif args.dataset == 'imagenet':
+        pass
+
     elif args.dataset == 'svhn':
         train_transform, valid_transform = ig_utils._data_transforms_svhn(args)
         train_data = dset.SVHN(root=args.data, split='train', download=True, transform=train_transform)
@@ -149,7 +167,7 @@ def main():
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, float(args.epochs))
-
+    #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 30, gamma=0.1)
 
     #### resume
     start_epoch = 0
@@ -172,6 +190,7 @@ def main():
 
     #### main training
     best_valid_acc = 0
+  #  lr=0.1
     for epoch in range(start_epoch, args.epochs):
         lr = scheduler.get_lr()[0]
         if args.cutout:
@@ -184,18 +203,20 @@ def main():
 
         train_acc, train_obj = train(train_queue, model, criterion, optimizer)
         logging.info('train_acc %f', train_acc)
-       # writer.add_scalar('Acc/train', train_acc, epoch)
-      #  writer.add_scalar('Obj/train', train_obj, epoch)
+        writer.add_scalar('Acc/train', train_acc, epoch)
+        writer.add_scalar('Obj/train', train_obj, epoch)
 
         ## scheduler
         scheduler.step()
+     #   if epochs % 30 ==0:
+      #      lr = lr*0.1
 
         #sposto fuori per evdere se davvero lo usa o no
      #   '''
         valid_acc, valid_obj = infer(valid_queue, model, criterion)
         logging.info('valid_acc %f', valid_acc)
-     #   writer.add_scalar('Acc/valid', valid_acc, epoch)
-      #  writer.add_scalar('Obj/valid', valid_obj, epoch)
+        writer.add_scalar('Acc/valid', valid_acc, epoch)
+        writer.add_scalar('Obj/valid', valid_obj, epoch)
 
         ## checkpoint
         if (epoch + 1) % args.ckpt_interval == 0:
@@ -212,7 +233,7 @@ def main():
  #   valid_acc, valid_obj = infer(valid_queue, model, criterion)
   #  logging.info('Test acc %f', valid_acc)
    # logging.info('best valid_acc %f', best_valid_acc)
-    #writer.close()
+    writer.close()
 
 
 def train(train_queue, model, criterion, optimizer):

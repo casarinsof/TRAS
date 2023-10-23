@@ -235,9 +235,9 @@ def pt_project(train_queue, valid_queue, model, architect, optimizer,
 
     logging.info('projection finished')
     model.printing(logging)
-    num_params = ig_utils.count_parameters_in_Compact(model)
+    #num_params = ig_utils.count_parameters_in_Compact(model)
     genotype = model.genotype()
-    logging.info('param size = %f', num_params)
+  #  logging.info('param size = %f', num_params)
     logging.info('genotype = %s', genotype)
 
     return

@@ -1,23 +1,20 @@
 import torch.nn.functional as F
-from sota.cnn.operations import *
-from sota.cnn.genotypes import Genotype
+from sotaDAS.cnn.operations import *
+from sotaDAS.cnn.genotypes import Genotype
 import sys
 
 sys.path.insert(0, '../../')
 from nasbench201.utils import drop_path
-from video_network import VideoResnet18 as resnet18
-from video_network import VideoResnet101 as resnet101
-from video_network import VideoResnet152 as resnet152
-from video_network import VideoResnet50 as resnet50
+from torchvision.models import resnet18, resnet50, resnet152, resnet101
 import torch
 
 
 class MixedOp(nn.Module):
-    def __init__(self, stride, num_frames, shift_amount, zoom_factor, rotation_angle, outsize, PRIMITIVES):
+    def __init__(self, stride, outsize, PRIMITIVES):
         super(MixedOp, self).__init__()
         self._ops = nn.ModuleList()
         for primitive in PRIMITIVES:
-            op = OPS[primitive](stride, num_frames, shift_amount, zoom_factor, rotation_angle, outsize)
+            op = OPS[primitive](stride, outsize)
             if 'pool' in primitive:
                 op = nn.Sequential(op)
             self._ops.append(op)
@@ -29,7 +26,7 @@ class MixedOp(nn.Module):
 
 class Cell(nn.Module):
 
-    def __init__(self, steps, multiplier, num_segments, num_classes):
+    def __init__(self, steps, multiplier, num_classes):
         """
 
         :param steps:  Number of intermediate nodes in the cell.
@@ -47,14 +44,13 @@ class Cell(nn.Module):
         self.zoom_factor = 0.2
         self.rotation_angle = 3
 
-        self.num_frames = num_segments
         self.num_classes = num_classes
         if self.num_classes == 10 or self.num_classes == 100:
-            self.outsize = (64, 64)
+            self.outsize = (32,32)
         elif self.num_classes == 200:
-            self.outsize = (128, 128)
+            self.outsize = (64,64)
         elif self.num_classes == 1000:
-            self.outsize = (448, 448)
+            self.outsize = (224,224)
 
         """
         preprocess0 and preprocess1: These are the preprocessing steps applied to the input tensors s0 and s1, 
@@ -75,8 +71,7 @@ class Cell(nn.Module):
         for i in range(self._steps):
             for j in range(1 + i):
                 stride = 1
-                op = MixedOp(stride, self.num_frames, self.shift_amount, self.zoom_factor, self.rotation_angle,
-                             self.outsize, self.primitives[edge_index])
+                op = MixedOp(stride, self.outsize, self.primitives[edge_index])
                 self._ops.append(op)
                 edge_index += 1
 
@@ -110,10 +105,7 @@ class Network(nn.Module):
         self._steps = steps
         self._multiplier = multiplier
         self.drop_path_prob = drop_path_prob
-        if args.search_space == 's5':
-            self.num_segments = 5
-        elif args.search_space == 's6':
-            self.num_segments = 16
+
 
         nn.Module.PRIMITIVES = primitives;
         self.op_names = primitives
@@ -128,18 +120,18 @@ class Network(nn.Module):
         C_prev_prev, C_prev, C_curr = C_curr, C_curr, C
         self.cells = nn.ModuleList()
 
-        cell = Cell(steps, multiplier, self.num_segments, num_classes)
+        cell = Cell(steps, multiplier, num_classes)
 
         self.cells += [cell]
 
         if args.backbone == 'resnet18':
-            self.net = resnet18(False, num_classes, self.num_segments).cuda()
+            self.net = resnet18(False, num_classes).cuda()
         if args.backbone == 'resnet50':
-            self.net = resnet50(False, num_classes, self.num_segments).cuda()
+            self.net = resnet50(False, num_classes).cuda()
         if args.backbone == 'resnet101':
-            self.net = resnet101(False, num_classes, self.num_segments).cuda()
+            self.net = resnet101(False, num_classes).cuda()
         if args.backbone == 'resnet152':
-            self.net = resnet152(False, num_classes, self.num_segments).cuda()
+            self.net = resnet152(False, num_classes).cuda()
 
         self._initialize_alphas()
 

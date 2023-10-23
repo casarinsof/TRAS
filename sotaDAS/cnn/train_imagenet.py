@@ -6,21 +6,17 @@ import sys
 
 sys.path.insert(0, '../../')
 import time
-from nasbench201.imageNET_loader import ImageNet
+from dataloaders.imageNET_loader import ImageNet
 import numpy as np
 import os
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch.utils
-import torchvision.datasets as dset
-import torchvision.transforms as transforms
-from torch.autograd import Variable
 import nasbench201.utils as ig_utils
 import nasbench201.utils as utils
 from sota.cnn.model import Network
 # from sota.cnn.model_imagenet import NetworkImageNet as Network
-import sota.cnn.genotypes as genotypes
 
 parser = argparse.ArgumentParser("imagenet")
 parser.add_argument('--data', type=str, default='/data/vision_group/ImageNet', help='location of the data corpus')

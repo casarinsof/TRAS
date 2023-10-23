@@ -20,7 +20,7 @@ from attacker.perturb import Linf_PGD_alpha, Random_alpha
 from nasbench201.architect_ig import Architect #todo
 from sota.cnn.spaces import spaces_dict
 
-#from torch.utils.tensorboard import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 from sota.cnn.projection import pt_project
 
 
@@ -30,6 +30,7 @@ parser = argparse.ArgumentParser("sota")
 parser.add_argument('--data', type=str, default='../../data',
                     help='location of the data corpus')
 parser.add_argument('--dataset', type=str, default='cifar10', help='choose dataset')
+parser.add_argument('--backbone', type=str, help='backbone to use')
 parser.add_argument('--batch_size', type=int, default=64, help='batch size')
 parser.add_argument('--learning_rate', type=float, default=0.025, help='init learning rate')
 parser.add_argument('--learning_rate_min', type=float, default=0.001, help='min learning rate')
@@ -91,8 +92,8 @@ if args.expid_tag != '':
     args.save += '-{}'.format(args.expid_tag)
 
 expid = args.save
-args.save = '../../experiments/sota/{}/search-{}-{}-{}'.format(
-    args.dataset, args.save, args.search_space, args.seed)
+args.save = '../../experiments/sota/{}/search-{}-{}-{}-{}'.format(
+    args.dataset, args.save, args.search_space, args.backbone, args.seed)
 
 if args.unrolled:
     args.save += '-unrolled'
@@ -109,11 +110,8 @@ if args.resume_epoch > 0: # do not delete dir when resume:
 else:
     scripts_to_save = glob.glob('*.py') + glob.glob('../../nasbench201/architect*.py') + glob.glob('../../optimizers/darts/architect.py')
     if os.path.exists(args.save):
-        if 'debug' in args.expid_tag or input("WARNING: {} exists, override?[y/n]".format(args.save)) == 'y':
-            print('proceed to override saving directory')
-            shutil.rmtree(args.save)
-        else:
-            exit(0)
+        print('proceed to override saving directory')
+        shutil.rmtree(args.save)
     ig_utils.create_exp_dir(args.save, scripts_to_save=scripts_to_save)
 
 
@@ -142,16 +140,16 @@ log_file += '.txt'
 log_path = os.path.join(args.save, log_file)
 logging.info('======> log filename: %s', log_file)
 
-if args.log_tag != 'debug' and os.path.exists(log_path):
-    if input("WARNING: {} exists, override?[y/n]".format(log_file)) == 'y':
-        print('proceed to override log file directory')
-    else:
-        exit(0)
+#if args.log_tag != 'debug' and os.path.exists(log_path):
+ #   if input("WARNING: {} exists, override?[y/n]".format(log_file)) == 'y':
+  #      print('proceed to override log file directory')
+  #  else:
+  #      exit(0)
 
 fh = logging.FileHandler(log_path, mode='w')
 fh.setFormatter(logging.Formatter(log_format))
 logging.getLogger().addHandler(fh)
-#writer = SummaryWriter(args.save + '/runs')
+writer = SummaryWriter(args.save + '/runs')
 
 #### dev resume dir
 args.dev_resume_checkpoint_dir = os.path.join(args.save, args.dev_resume_log)
@@ -165,6 +163,10 @@ if not os.path.exists(args.dev_save_checkpoint_dir):
 
 if args.dataset == 'cifar100':
     n_classes = 100
+elif args.dataset == 'tiny':
+    n_classes = 200
+elif args.dataset == 'imagenet':
+    n_classes = 1000
 else:
     n_classes = 10
 
@@ -193,6 +195,20 @@ def main():
         train_transform, valid_transform = ig_utils._data_transforms_cifar100(args)
         train_data = dset.CIFAR100(root=args.data, train=True, download=True, transform=train_transform)
         valid_data = dset.CIFAR100(root=args.data, train=False, download=True, transform=valid_transform)
+    elif args.dataset == 'tiny':
+        dir_path = f'/data/vision_group/raw-data/{args.dataset}'
+        train_transform, valid_transform = ig_utils._data_transforms_tiny(args)
+
+        train_data = ig_utils.TinyImageNetDataset(root_dir=dir_path, mode='train', preload=False,
+                                            load_transform=None,
+                                            transform=train_transform, download=False, max_samples=None)
+        valid_data = ig_utils.TinyImageNetDataset(root_dir=dir_path, mode='val', preload=False,
+                                           load_transform=None,
+                                           transform=valid_transform, download=False, max_samples=None)
+
+    elif args.dataset == 'imagenet':
+        pass
+
     elif args.dataset == 'svhn':
         train_transform, valid_transform = ig_utils._data_transforms_svhn(args)
         train_data = dset.SVHN(root=args.data, split='train', download=True, transform=train_transform)
@@ -279,11 +295,11 @@ def main():
 
 
     #### main search
-    lr = 0.006  # scheduler.get_lr()[0]
+    #lr = scheduler.get_lr()[0] #0.006
     logging.info('starting training at epoch {}'.format(start_epoch))
     for epoch in range(start_epoch, args.epochs):
-        #scheduler.get_lr()[0]
-        lr = lr - 0.0001
+        lr = scheduler.get_lr()[0]
+        #lr = lr - 0.0001
 
         ## data aug
         if args.cutout:
@@ -308,24 +324,22 @@ def main():
         train_acc, train_obj = train(train_queue, valid_queue, model, architect, model.optimizer, lr, epoch,
                                      perturb_alpha, epsilon_alpha)
         logging.info('train_acc %f | train_obj %f', train_acc, train_obj)
-     #   writer.add_scalar('Acc/train', train_acc, epoch)
-     #   writer.add_scalar('Obj/train', train_obj, epoch)
+        writer.add_scalar('Acc/train', train_acc, epoch)
+        writer.add_scalar('Obj/train', train_obj, epoch)
 
         ## scheduler updates (before saving ckpts)
-      #  scheduler.step()
-        # todo lo sto emttendo solo perche lr aumenta e peggiora, poi lo togleiro e cambiero proprio scheduler sin dall inizio
-      #  lr = lr - 0.0001
+        scheduler.step()
 
         ## validation
         valid_acc, valid_obj = infer(valid_queue, model, log=False)
         logging.info('valid_acc %f | valid_obj %f', valid_acc, valid_obj)
-      #  writer.add_scalar('Acc/valid', valid_acc, epoch)
-      #  writer.add_scalar('Obj/valid', valid_obj, epoch)
+        writer.add_scalar('Acc/valid', valid_acc, epoch)
+        writer.add_scalar('Obj/valid', valid_obj, epoch)
 
         test_acc, test_obj = infer(test_queue, model, log=False)
         logging.info('test_acc %f | test_obj %f', test_acc, test_obj)
-      #  writer.add_scalar('Acc/test', test_acc, epoch)
-      #  writer.add_scalar('Obj/test', test_obj, epoch)
+        writer.add_scalar('Acc/test', test_acc, epoch)
+        writer.add_scalar('Obj/test', test_obj, epoch)
 
         ## saving
         if (epoch + 1) % args.ckpt_interval == 0:
@@ -344,7 +358,7 @@ def main():
         pt_project(train_queue, valid_queue, model, architect, model.optimizer,
                    start_epoch, args, infer, perturb_alpha, args.epsilon_alpha)
 
-  #  writer.close()
+    writer.close()
 
 
 def train(train_queue, valid_queue, model, architect, optimizer, lr, epoch,

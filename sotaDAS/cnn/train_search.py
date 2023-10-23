@@ -1,11 +1,12 @@
 import os
 import sys
+
 sys.path.insert(0, '../../')
 import glob
 import numpy as np
 import torch
 import shutil
-import nasbench201.utils as ig_utils #todo
+import nasbench201.utils as ig_utils
 import logging
 import argparse
 import torch.nn as nn
@@ -13,16 +14,15 @@ import torch.utils
 import torchvision.datasets as dset
 import torch.backends.cudnn as cudnn
 
-from sota.cnn.model_search import Network as DartsNetwork #todo
-from sota.cnn.model_search_darts_proj import DartsNetworkProj #todo
+from sota.cnn.model_search import Network as DartsNetwork
+from sota.cnn.model_search_darts_proj import DartsNetworkProj
 from attacker.perturb import Linf_PGD_alpha, Random_alpha
 
-from nasbench201.architect_ig import Architect #todo
+from nasbench201.architect_ig import Architect
 from sota.cnn.spaces import spaces_dict
 
 from torch.utils.tensorboard import SummaryWriter
 from sota.cnn.projection import pt_project
-
 
 torch.set_printoptions(precision=4, sci_mode=False)
 
@@ -40,7 +40,7 @@ parser.add_argument('--report_freq', type=float, default=50, help='report freque
 parser.add_argument('--gpu', type=str, default='auto', help='gpu device id')
 parser.add_argument('--epochs', type=int, default=50, help='num of training epochs')
 parser.add_argument('--init_channels', type=int, default=16, help='num of init channels')
-parser.add_argument('--layers', type=int, default=8, help='total number of layers')
+parser.add_argument('--layers', type=int, default=1, help='total number of layers')
 parser.add_argument('--model_path', type=str, default='saved_models', help='path to save the model')
 parser.add_argument('--cutout', action='store_true', default=False, help='use cutout')
 parser.add_argument('--cutout_length', type=int, default=16, help='cutout length')
@@ -59,7 +59,8 @@ parser.add_argument('--arch_opt', type=str, default='adam', help='architecture o
 parser.add_argument('--resume_epoch', type=int, default=0, help="load ckpt, start training at resume_epoch")
 parser.add_argument('--resume_expid', type=str, default='', help="full expid to resume from, name == ckpt folder name")
 parser.add_argument('--dev', type=str, default='', help="dev mode")
-parser.add_argument('--deter', action='store_true', default=False, help='fully deterministic, for debugging only, slow like hell')
+parser.add_argument('--deter', action='store_true', default=False,
+                    help='fully deterministic, for debugging only, slow like hell')
 parser.add_argument('--expid_tag', type=str, default='', help="extra tag for expid, 'debug' for debugging")
 parser.add_argument('--log_tag', type=str, default='', help="extra tag for log, use 'debug' for debug")
 #### darts 2nd order
@@ -71,13 +72,15 @@ parser.add_argument('--epsilon_alpha', type=float, default=0.3, help='max epsilo
 ## common
 parser.add_argument('--tune_epochs', type=int, default=140, help='not used for projection (use proj_intv instead)')
 parser.add_argument('--fast', action='store_true', default=False, help='eval/train on one batch, for debugging')
-parser.add_argument('--dev_resume_epoch', type=int, default=-1, help="resume epoch for arch selection phase, starting from 0")
+parser.add_argument('--dev_resume_epoch', type=int, default=-1,
+                    help="resume epoch for arch selection phase, starting from 0")
 parser.add_argument('--dev_resume_log', type=str, default='', help="resume log name for arch selection phase")
 ## projection
-parser.add_argument('--edge_decision', type=str, default='sgas', choices=['random'], help='used for both proj_op and proj_edge')
+parser.add_argument('--edge_decision', type=str, default='sgas', choices=['random'],
+                    help='used for both proj_op and proj_edge')
 parser.add_argument('--proj_crit_normal', type=str, default='acc', choices=['loss', 'acc'])
 parser.add_argument('--proj_crit_reduce', type=str, default='acc', choices=['loss', 'acc'])
-parser.add_argument('--proj_crit_edge',   type=str, default='acc', choices=['loss', 'acc'])
+parser.add_argument('--proj_crit_edge', type=str, default='acc', choices=['loss', 'acc'])
 parser.add_argument('--proj_intv', type=int, default=10, help='interval between two projections')
 parser.add_argument('--proj_mode_edge', type=str, default='reg', choices=['reg'],
                     help='edge projection evaluation mode, reg: one edge at a time')
@@ -104,21 +107,21 @@ if not args.arch_weight_decay == 1e-3:
 if args.cutout:
     args.save += '-cutout-' + str(args.cutout_length) + '-' + str(args.cutout_prob)
 
-if args.resume_epoch > 0: # do not delete dir when resume:
+if args.resume_epoch > 0:  # do not delete dir when resume:
     args.save = '../../experiments/sota/{}/{}'.format(args.dataset, args.resume_expid)
-    assert(os.path.exists(args.save), 'resume but {} does not exist!'.format(args.save))
+    assert (os.path.exists(args.save), 'resume but {} does not exist!'.format(args.save))
 else:
-    scripts_to_save = glob.glob('*.py') + glob.glob('../../nasbench201/architect*.py') + glob.glob('../../optimizers/darts/architect.py')
+    scripts_to_save = glob.glob('*.py') + glob.glob('../../nasbench201/architect*.py') + glob.glob(
+        '../../optimizers/darts/architect.py')
     if os.path.exists(args.save):
         print('proceed to override saving directory')
         shutil.rmtree(args.save)
     ig_utils.create_exp_dir(args.save, scripts_to_save=scripts_to_save)
 
-
 #### logging
 log_format = '%(asctime)s %(message)s'
 logging.basicConfig(stream=sys.stdout, level=logging.INFO,
-    format=log_format, datefmt='%m/%d %I:%M:%S %p')
+                    format=log_format, datefmt='%m/%d %I:%M:%S %p')
 log_file = 'log'
 if args.resume_epoch > 0:
     log_file += '_resume-{}'.format(args.resume_epoch)
@@ -128,23 +131,24 @@ if args.dev != '':
     log_file += '_dev-{}'.format(args.dev)
     if args.dev == 'proj':
         log_file += '_intv-{}_ED-{}_PCN-{}_PCR-{}'.format(
-                    args.proj_intv, args.edge_decision, args.proj_crit_normal, args.proj_crit_reduce)
+            args.proj_intv, args.edge_decision, args.proj_crit_normal, args.proj_crit_reduce)
     else:
-        print('ERROR: DEV METHOD NOT SUPPORTED IN LOGGING:', args.dev); exit(0)
+        print('ERROR: DEV METHOD NOT SUPPORTED IN LOGGING:', args.dev);
+        exit(0)
     log_file += '_seed-{}'.format(args.seed)
 
     if args.log_tag != '': log_file += '_tag-{}'.format(args.log_tag)
-if args.log_tag == 'debug': ## prevent redundant debug log files
+if args.log_tag == 'debug':  ## prevent redundant debug log files
     log_file = 'log_debug'
 log_file += '.txt'
 log_path = os.path.join(args.save, log_file)
 logging.info('======> log filename: %s', log_file)
 
-#if args.log_tag != 'debug' and os.path.exists(log_path):
- #   if input("WARNING: {} exists, override?[y/n]".format(log_file)) == 'y':
-  #      print('proceed to override log file directory')
-  #  else:
-  #      exit(0)
+# if args.log_tag != 'debug' and os.path.exists(log_path):
+#   if input("WARNING: {} exists, override?[y/n]".format(log_file)) == 'y':
+#      print('proceed to override log file directory')
+#  else:
+#      exit(0)
 
 fh = logging.FileHandler(log_path, mode='w')
 fh.setFormatter(logging.Formatter(log_format))
@@ -169,6 +173,7 @@ elif args.dataset == 'imagenet':
     n_classes = 1000
 else:
     n_classes = 10
+
 
 def main():
     torch.set_num_threads(3)
@@ -200,11 +205,11 @@ def main():
         train_transform, valid_transform = ig_utils._data_transforms_tiny(args)
 
         train_data = ig_utils.TinyImageNetDataset(root_dir=dir_path, mode='train', preload=False,
-                                            load_transform=None,
-                                            transform=train_transform, download=False, max_samples=None)
+                                                  load_transform=None,
+                                                  transform=train_transform, download=False, max_samples=None)
         valid_data = ig_utils.TinyImageNetDataset(root_dir=dir_path, mode='val', preload=False,
-                                           load_transform=None,
-                                           transform=valid_transform, download=False, max_samples=None)
+                                                  load_transform=None,
+                                                  transform=valid_transform, download=False, max_samples=None)
 
     elif args.dataset == 'imagenet':
         pass
@@ -218,7 +223,6 @@ def main():
     indices = list(range(num_train))
     split = int(np.floor(args.train_portion * num_train))
 
-
     train_queue = torch.utils.data.DataLoader(
         train_data, batch_size=args.batch_size,
         sampler=torch.utils.data.sampler.SubsetRandomSampler(indices[:split]),
@@ -229,11 +233,9 @@ def main():
         sampler=torch.utils.data.sampler.SubsetRandomSampler(indices[split:num_train]),
         pin_memory=True)
 
-    test_queue  = torch.utils.data.DataLoader(
+    test_queue = torch.utils.data.DataLoader(
         valid_data, batch_size=args.batch_size,
         pin_memory=True)
-
-
 
     #### sdarts
     if args.perturb_alpha == 'none':
@@ -243,34 +245,36 @@ def main():
     elif args.perturb_alpha == 'random':
         perturb_alpha = Random_alpha
     else:
-        print('ERROR PERTURB_ALPHA TYPE:', args.perturb_alpha); exit(1)
-    
+        print('ERROR PERTURB_ALPHA TYPE:', args.perturb_alpha);
+        exit(1)
+
     #### model
     criterion = nn.CrossEntropyLoss()
     criterion = criterion.cuda()
 
     ## darts
     if args.method in ['darts', 'blank']:
-        model = DartsNetwork(args.init_channels, n_classes, args.layers, criterion, spaces_dict[args.search_space], args) #todo
+        model = DartsNetwork(args.init_channels, n_classes, args.layers, criterion, spaces_dict[args.search_space],
+                             args)  # todo
     ## sdarts
 
     ## projection
     elif args.method in ['darts-proj', 'blank-proj']:
-        model = DartsNetworkProj(args.init_channels, n_classes, args.layers, criterion, spaces_dict[args.search_space], args)
+        model = DartsNetworkProj(args.init_channels, n_classes, args.layers, criterion, spaces_dict[args.search_space],
+                                 args)
 
     else:
-        print('ERROR: WRONG MODEL:', args.method); exit(0)
+        print('ERROR: WRONG MODEL:', args.method);
+        exit(0)
     model = model.cuda()
 
     architect = Architect(model, args)
 
     logging.info("param size = %fMB", ig_utils.count_parameters_in_MB(model))
 
-
     #### scheduler
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         model.optimizer, args.epochs, eta_min=args.learning_rate_min)
-
 
     #### resume
     start_epoch = 0
@@ -281,25 +285,24 @@ def main():
         if os.path.isfile(filename):
             logging.info("=> loading checkpoint '{}'".format(filename))
             checkpoint = torch.load(filename, map_location='cpu')
-            resume_epoch = checkpoint['epoch'] # epoch
-            model.load_state_dict(checkpoint['state_dict']) # model
-            saved_arch_parameters = checkpoint['alpha'] # arch
+            resume_epoch = checkpoint['epoch']  # epoch
+            model.load_state_dict(checkpoint['state_dict'])  # model
+            saved_arch_parameters = checkpoint['alpha']  # arch
             model.set_arch_parameters(saved_arch_parameters)
             scheduler.load_state_dict(checkpoint['scheduler'])
-            model.optimizer.load_state_dict(checkpoint['optimizer']) # optimizer
-            architect.optimizer.load_state_dict(checkpoint['arch_optimizer']) # arch optimizer
+            model.optimizer.load_state_dict(checkpoint['optimizer'])  # optimizer
+            architect.optimizer.load_state_dict(checkpoint['arch_optimizer'])  # arch optimizer
             start_epoch = args.resume_epoch
             logging.info("=> loaded checkpoint '{}' (epoch {})".format(filename, resume_epoch))
         else:
             logging.info("=> no checkpoint found at '{}'".format(filename))
 
-
     #### main search
-    lr = scheduler.get_lr()[0] #0.006
+    lr = scheduler.get_lr()[0]  # 0.006
     logging.info('starting training at epoch {}'.format(start_epoch))
     for epoch in range(start_epoch, args.epochs):
         scheduler.get_lr()[0]
-        #lr = lr - 0.0001
+        # lr = lr - 0.0001
 
         ## data aug
         if args.cutout:
@@ -307,16 +310,16 @@ def main():
             logging.info('epoch %d lr %e cutout_prob %e', epoch, lr, train_transform.transforms[-1].cutout_prob)
         else:
             logging.info('epoch %d lr %e', epoch, lr)
-        
+
         ## sdarts
         if args.perturb_alpha:
             epsilon_alpha = 0.03 + (args.epsilon_alpha - 0.03) * epoch / args.epochs
             logging.info('epoch %d epsilon_alpha %e', epoch, epsilon_alpha)
 
         ## logging
-        #num_params = ig_utils.count_parameters_in_Compact(model) #todo modifica model
+        # num_params = ig_utils.count_parameters_in_Compact(model) #todo modifica model
         genotype = model.genotype()
-       # logging.info('param size = %f', num_params)
+        # logging.info('param size = %f', num_params)
         logging.info('genotype = %s', genotype)
         model.printing(logging)
 
@@ -372,25 +375,30 @@ def train(train_queue, valid_queue, model, architect, optimizer, lr, epoch,
 
         ## data
         input, target = next(iter(train_queue))
-        input = input.cuda(); target = target.cuda(non_blocking=True)
+        input = input.cuda();
+        target = target.cuda(non_blocking=True)
         input_search, target_search = next(iter(valid_queue))
-        input_search = input_search.cuda(); target_search = target_search.cuda(non_blocking=True)
+        input_search = input_search.cuda();
+        target_search = target_search.cuda(non_blocking=True)
 
         ## train alpha
-        optimizer.zero_grad(); architect.optimizer.zero_grad()
+        optimizer.zero_grad();
+        architect.optimizer.zero_grad()
         architect.step(input, target, input_search, target_search, lr, optimizer)
 
         ## sdarts
         if perturb_alpha:
             # transform arch_parameters to prob (for perturbation)
             model.softmax_arch_parameters()
-            optimizer.zero_grad(); architect.optimizer.zero_grad()
+            optimizer.zero_grad();
+            architect.optimizer.zero_grad()
             perturb_alpha(model, input, target, epsilon_alpha)
 
         ## train weights
-        optimizer.zero_grad(); architect.optimizer.zero_grad()
+        optimizer.zero_grad();
+        architect.optimizer.zero_grad()
         logits, loss = model.step(input, target, args)
-        
+
         ## sdarts
         if perturb_alpha:
             ## restore alpha to unperturbed arch_parameters
@@ -408,20 +416,20 @@ def train(train_queue, valid_queue, model, architect, optimizer, lr, epoch,
         if args.fast:
             break
 
-    return  top1.avg, objs.avg
+    return top1.avg, objs.avg
 
 
 def infer(valid_queue, model, log=True, _eval=True, weights_dict=None):
     objs = ig_utils.AvgrageMeter()
     top1 = ig_utils.AvgrageMeter()
     top5 = ig_utils.AvgrageMeter()
-    model.eval() if _eval else model.train() # disable running stats for projection
+    model.eval() if _eval else model.train()  # disable running stats for projection
 
     with torch.no_grad():
         for step, (input, target) in enumerate(valid_queue):
             input = input.cuda()
             target = target.cuda(non_blocking=True)
-            
+
             if weights_dict is None:
                 loss, logits = model._loss(input, target, return_logits=True)
             else:
