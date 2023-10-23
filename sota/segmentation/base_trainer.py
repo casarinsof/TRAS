@@ -39,15 +39,16 @@ class BaseTrainer:
             self.model = DataParallelWithCallback(self.model, device_ids=availble_gpus)
         else:
             self.model = torch.nn.DataParallel(self.model, device_ids=availble_gpus)
-        if config["use_synch_bn"]:
-            self.architect = convert_model(self.architect)
-            self.architect = DataParallelWithCallback(self.architect, device_ids=availble_gpus)
-        else:
-            self.architect = torch.nn.DataParallel(self.architect, device_ids=availble_gpus)
-        self.architect.to(self.device)
+
+    #    if config["use_synch_bn"]:
+    #        self.architect = convert_model(self.architect)
+   #         self.architect = DataParallelWithCallback(self.architect, device_ids=availble_gpus)
+   #     else:
+   #         self.architect = torch.nn.DataParallel(self.architect, device_ids=availble_gpus)
+   #     self.architect.to(self.device)
         self.model.to(self.device)
-        print(f"The model is split across {len(self.model.device_ids)} device(s).")
-        print(f"The architect is split across {len(self.architect.device_ids)} device(s).")
+        print(f"\nThe model is split across {len(self.model.device_ids)} device(s).")
+        print(f"\nThe architect is split across {len(self.architect.device_ids)} device(s).")
 
         # CONFIGS
         cfg_trainer = self.config['trainer']
@@ -181,10 +182,10 @@ class BaseTrainer:
         #        else:
          #           self.not_improved_count += 1
 
-       #         if self.not_improved_count > self.early_stoping:
-       #             self.logger.info(f'\nPerformance didn\'t improve for {self.early_stoping} epochs')
-       #             self.logger.warning('Training Stoped')
-       #             break
+     #           if self.not_improved_count > self.early_stoping:
+     #               self.logger.info(f'\nPerformance didn\'t improve for {self.early_stoping} epochs')
+     #               self.logger.warning('Training Stoped')
+     #               break
 
             # SAVE CHECKPOINT
             if epoch % self.save_period == 0:

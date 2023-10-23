@@ -1,6 +1,6 @@
 {
     "name": "PSPNet",
-    "n_gpu": 1,
+    "n_gpu": 4,
     "use_synch_bn": false,
 
     "space": {
