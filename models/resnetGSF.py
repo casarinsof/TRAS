@@ -9,7 +9,8 @@ __all__ = ['resnet', 'resnet50', 'resnet101']
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
     'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth',
-    'resnet50': 'https://download.pytorch.org/models/resnet50-19c8e357.pth',
+   # 'resnet50': 'https://download.pytorch.org/models/resnet50-19c8e357.pth', # senza DEEP BASE
+    'resnet50': 'https://s3.us-west-1.wasabisys.com/encoding/models/resnet50s-a75c83cf.zip',
     'resnet101': 'https://download.pytorch.org/models/resnet101-5d3b4d8f.pth',
     'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
     'resnext50_32x4d': 'https://download.pytorch.org/models/resnext50_32x4d-7cdf4587.pth',
@@ -126,7 +127,7 @@ class Bottleneck(nn.Module):
     expansion = 4
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1,
-                 base_width=64, dilation=1, norm_layer=None, num_segments=4, gsf_ch_ratio=4, gsf_ch_fusion=False,
+                 base_width=64, dilation=1, norm_layer=None, num_segments=8, gsf_ch_ratio=4, gsf_ch_fusion=False,
                  gsf_enabled=False, temp_kern=1):
         super(Bottleneck, self).__init__()
         if norm_layer is None:
@@ -135,8 +136,7 @@ class Bottleneck(nn.Module):
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
         self.conv1 = conv1x1(inplanes, width)
         self.bn1 = norm_layer(width)
-        #self.conv2 = conv3x3(width, width, stride, groups, dilation)
-        self.conv2 = conv3x3(width, width, 1, groups, dilation)
+        self.conv2 = conv3x3(width, width, stride, groups, dilation)
         self.bn2 = norm_layer(width)
         self.conv3 = conv1x1(width, planes * self.expansion)
         self.bn3 = norm_layer(planes * self.expansion)
@@ -149,14 +149,9 @@ class Bottleneck(nn.Module):
 
     def forward(self, x):
 
-        # ------ added -------------
-        x_dilated = reverse_atrous(x, stride=self.stride)
-        b, t, ch, w, h = x_dilated.size()
-        x_dilated = x_dilated.view(-1, ch, w, h)
+        identity = x
 
-        identity = x_dilated
-
-        out = self.conv1(x_dilated)
+        out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
 
@@ -170,25 +165,18 @@ class Bottleneck(nn.Module):
         out = self.bn3(out)
 
         if self.downsample is not None:
-            identity = self.downsample(x_dilated)
+            identity = self.downsample(x)
 
         out += identity
-        base_out_logits = self.relu(out)
-
-        # ----- added --------
-
-        base_out_logits = base_out_logits.view((-1, self.num_segments) + base_out_logits.size()[1:])
-        output = self.consensus(base_out_logits)
-        # ----- added --------
-
-        return output
+        out = self.relu(out)
+        return out
 
 
 class ResNet(nn.Module):
 
     def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 norm_layer=None, num_segments=4, gsf_ch_ratio=25, deep_base=True):
+                 norm_layer=None, num_segments=8, gsf_ch_ratio=25, deep_base=True):
         super(ResNet, self).__init__()
 
         if norm_layer is None:
@@ -196,7 +184,7 @@ class ResNet(nn.Module):
         self._norm_layer = norm_layer
         self.num_segments = num_segments
 
-        self.inplanes = 64
+        self.inplanes = 128 if deep_base else 64
         self.dilation = 1
         if replace_stride_with_dilation is None:
             # each element in the tuple indicates if we should replace
@@ -254,6 +242,9 @@ class ResNet(nn.Module):
                 if isinstance(m, Bottleneck):
                     nn.init.constant_(m.bn3.weight, 0)
 
+        self.consensus = ConsensusModule('avg')
+
+
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False, num_segments=8, gsf_ch_ratio=25):
         norm_layer = self._norm_layer
         downsample = None
@@ -262,17 +253,11 @@ class ResNet(nn.Module):
             self.dilation *= stride
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
-      #      downsample = nn.Sequential(
-      #          conv1x1(self.inplanes, planes * block.expansion, stride),
-      #          norm_layer(planes * block.expansion),
-      #      )
-
-      #todo modified with stride =1, because if it;s different I have tmy dilation in that block, therefore
-      # the dimension is already halved.
             downsample = nn.Sequential(
-                conv1x1(self.inplanes, planes * block.expansion, 1),
+                conv1x1(self.inplanes, planes * block.expansion, stride),
                 norm_layer(planes * block.expansion),
             )
+
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
@@ -303,9 +288,12 @@ class ResNet(nn.Module):
 
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.fc(x)
+        out = self.fc(x)
 
-        return x
+        base_out_logits = out.view((-1, self.num_segments) + out.size()[1:])
+        output = self.consensus(base_out_logits)
+
+        return output
 
     def forward(self, x):
         return self._forward_impl(x)
@@ -327,7 +315,7 @@ def _resnet(arch, block, layers, pretrained, progress, num_segments, gsf_ch_rati
 
 
 
-def resnet50(pretrained=False, progress=True, num_segments=4, gsf_ch_ratio=25, **kwargs):
+def resnet50(pretrained=False, progress=True, num_segments=8, gsf_ch_ratio=25, **kwargs):
     r"""ResNet-50 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 

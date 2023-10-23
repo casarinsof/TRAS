@@ -78,8 +78,12 @@ class PSPNet(BaseModel):
         if freeze_bn: self.freeze_bn()
         if freeze_backbone:
             set_trainable([self.initial, self.layer1, self.layer2, self.layer3, self.layer4], False)
-
+        self.atrous = atrous
+        self.consensus = model.consensus
+        self.num_segments = model.num_segments
     def forward(self, x):
+        if self.atrous:
+            x = x.view((-1, 3) + x.size()[-2:])
         input_size = (x.size()[2], x.size()[3])
         x = self.initial(x)
         x = self.layer1(x)
@@ -95,7 +99,15 @@ class PSPNet(BaseModel):
             aux = self.auxiliary_branch(x_aux)
             aux = F.interpolate(aux, size=input_size, mode='bilinear')
             aux = aux[:, :, :input_size[0], :input_size[1]]
+            if self.atrous:
+                base_out_logits = output.view((-1, self.num_segments) + output.size()[1:])
+                output = self.consensus(base_out_logits)
+                base_aux_logits = aux.view((-1, self.num_segments) + aux.size()[1:])
+                aux = self.consensus(base_aux_logits)
             return output, aux
+        if self.atrous:
+            base_out_logits = output.view((-1, self.num_segments) + output.size()[1:])
+            output = self.consensus(base_out_logits)
         return output
 
     def get_backbone_params(self):
