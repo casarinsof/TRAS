@@ -45,7 +45,7 @@
             "blur": true,
             "split": "train",
             "num_workers": 8,
-            "val_split": 0.99
+            "val_split": 0.5
         }
     },
 
