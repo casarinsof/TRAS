@@ -2,3 +2,4 @@ dataloaders/imageNET_loader.py
 sota/cnn/model_imagenet.py
 sota/cnn/operations_imagenet.py
 sota/cnn/train_imagenet.py
+saved/
