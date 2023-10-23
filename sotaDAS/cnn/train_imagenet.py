@@ -3,9 +3,10 @@ import argparse
 import glob
 import logging
 import sys
+
 sys.path.insert(0, '../../')
 import time
-
+from nasbench201.imageNET_loader import ImageNet
 import numpy as np
 import os
 import torch
@@ -15,16 +16,22 @@ import torch.utils
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
 from torch.autograd import Variable
-
+import nasbench201.utils as ig_utils
 import nasbench201.utils as utils
-from sota.cnn.model_imagenet import NetworkImageNet as Network
+from sota.cnn.model import Network
+# from sota.cnn.model_imagenet import NetworkImageNet as Network
 import sota.cnn.genotypes as genotypes
 
 parser = argparse.ArgumentParser("imagenet")
-parser.add_argument('--data', type=str, default='path/to/imagenet', help='location of the data corpus')
+parser.add_argument('--data', type=str, default='/data/vision_group/ImageNet', help='location of the data corpus')
+parser.add_argument('--backbone', type=str, help='backbone to use')
+parser.add_argument('--search_space', type=str, default='s5', help='searching space to choose from')
 parser.add_argument('--batch_size', type=int, default=128, help='batch size')
 parser.add_argument('--learning_rate', type=float, default=0.1, help='init learning rate')
 parser.add_argument('--momentum', type=float, default=0.9, help='momentum')
+parser.add_argument('--cutout', action='store_true', default=False, help='use cutout')
+parser.add_argument('--cutout_length', type=int, default=16, help='cutout length')
+parser.add_argument('--cutout_prob', type=float, default=1.0, help='cutout probability')
 parser.add_argument('--weight_decay', type=float, default=3e-5, help='weight decay')
 parser.add_argument('--report_freq', type=float, default=100, help='report frequency')
 parser.add_argument('--gpu', type=int, default=0, help='gpu device id')
@@ -42,7 +49,8 @@ parser.add_argument('--label_smooth', type=float, default=0.1, help='label smoot
 parser.add_argument('--gamma', type=float, default=0.97, help='learning rate decay')
 parser.add_argument('--decay_period', type=int, default=1, help='epochs between two learning rate decays')
 parser.add_argument('--parallel', action='store_true', default=False, help='darts parallelism')
-parser.add_argument('--load', action='store_true', default='False', help='whether load checkpoint for continue training')
+parser.add_argument('--load', action='store_true', default='False',
+                    help='whether load checkpoint for continue training')
 args = parser.parse_args()
 
 args.save = '../../experiments/sota/imagenet/eval/{}-{}-{}-{}'.format(
@@ -59,7 +67,6 @@ fh = logging.FileHandler(os.path.join(args.save, 'log.txt'))
 fh.setFormatter(logging.Formatter(log_format))
 logging.getLogger().addHandler(fh)
 writer = SummaryWriter(args.save + '/runs')
-
 
 CLASSES = 1000
 
@@ -95,13 +102,13 @@ def main():
     logging.info("args = %s", args)
 
     genotype = eval("genotypes.%s" % args.arch)
-    model = Network(args.init_channels, CLASSES, args.layers, args.auxiliary, genotype)
+    #    model = Network(args.init_channels, CLASSES, args.layers, args.auxiliary, genotype)
+    model = Network(args.init_channels, CLASSES, args.layers, args.auxiliary, genotype, args)
 
     if args.parallel:
         model = nn.DataParallel(model).cuda()
     else:
         model = model.cuda()
-        
 
     logging.info("param size = %fMB", utils.count_parameters_in_MB(model))
 
@@ -117,30 +124,35 @@ def main():
         weight_decay=args.weight_decay
     )
 
-    traindir = os.path.join(args.data, 'train')
-    validdir = os.path.join(args.data, 'val')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    train_data = dset.ImageFolder(
-        traindir,
-        transforms.Compose([
-            transforms.RandomResizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ColorJitter(
-                brightness=0.4,
-                contrast=0.4,
-                saturation=0.4,
-                hue=0.2),
-            transforms.ToTensor(),
-            normalize,
-        ]))
-    valid_data = dset.ImageFolder(
-        validdir,
-        transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            normalize,
-        ]))
+    # traindir = os.path.join(args.data, 'train')
+    # validdir = os.path.join(args.data, 'val')
+    # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    # train_data = dset.ImageFolder(
+    #     traindir,
+    #     transforms.Compose([
+    #         transforms.RandomResizedCrop(224),
+    #         transforms.RandomHorizontalFlip(),
+    #         transforms.ColorJitter(
+    #             brightness=0.4,
+    #             contrast=0.4,
+    #             saturation=0.4,
+    #             hue=0.2),
+    #         transforms.ToTensor(),
+    #         normalize,
+    #     ]))
+    # valid_data = dset.ImageFolder(
+    #     validdir,
+    #     transforms.Compose([
+    #         transforms.Resize(256),
+    #         transforms.CenterCrop(224),
+    #         transforms.ToTensor(),
+    #         normalize,
+    #     ]))
+    traindir = os.path.join(args.data, 'train.lmdb')
+    validdir = os.path.join(args.data, 'val.lmdb')
+    train_transform, valid_transform = ig_utils._data_transforms_imagenet(args)
+    train_data = ImageNet(traindir, train_transform)
+    valid_data = ImageNet(validdir, valid_transform)
 
     train_queue = torch.utils.data.DataLoader(
         train_data, batch_size=args.batch_size, shuffle=True, pin_memory=True, num_workers=4)
@@ -150,11 +162,13 @@ def main():
 
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.decay_period, gamma=args.gamma)
 
-    if args.load:
+    if args.load is True:
         model, optimizer, start_epoch, best_acc_top1 = utils.load_checkpoint(
-            model, optimizer, '../../experiments/sota/imagenet/eval/EXP-20200210-143540-c10_s3_pgd-0-auxiliary-0.4-2753')
+            model, optimizer,
+            '../../experiments/sota/imagenet/eval/EXP-20200210-143540-c10_s3_pgd-0-auxiliary-0.4-2753')
     else:
         best_acc_top1 = 0
+        start_epoch = 0
 
     for epoch in range(start_epoch, args.epochs):
         logging.info('epoch %d lr %e', epoch, scheduler.get_lr()[0])

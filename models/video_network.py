@@ -89,63 +89,9 @@ class BasicBlock(nn.Module):
 
 
 # ResNet-18 model
-class ResNet18(nn.Module):
-    def __init__(self, num_classes, num_segments):
-        super(ResNet18, self).__init__()
-        self.num_segments = num_segments
-        self.in_channels = 64
-
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.bn1 = nn.InstanceNorm2d(64)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-
-        self.layer1 = self.make_layer(BasicBlock, 64, 2, stride=1, num_segments=num_segments)
-        self.layer2 = self.make_layer(BasicBlock, 128, 2, stride=2, num_segments=num_segments)
-        self.layer3 = self.make_layer(BasicBlock, 256, 2, stride=2, num_segments=num_segments)
-        self.layer4 = self.make_layer(BasicBlock, 512, 2, stride=2, num_segments=num_segments)
-
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.consensus = ConsensusModule('avg')
-        self.fc = nn.Linear(512 * BasicBlock.expansion, num_classes)
-
-    def forward(self, input):
-        x = input.view((-1, 3) + input.size()[-2:])
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
-
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-
-        x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
-        out = self.fc(x)
-
-        base_out_logits = out.view((-1, self.num_segments) + out.size()[1:])
-        output = self.consensus(base_out_logits)
-
-        return output
-
-    def make_layer(self, block, out_channels, num_blocks, stride, num_segments):
-        layers = []
-        layers.append(block(self.in_channels, out_channels, stride, num_segments))
-        self.in_channels = out_channels * block.expansion
-
-        for _ in range(1, num_blocks):
-            layers.append(block(self.in_channels, out_channels, num_segments=num_segments))
-
-        return nn.Sequential(*layers)
-
-#todo elimina quella resnet18 vecchia, e usa l'implementazione ufficiale
-
-
 
 class VideoResnet18(nn.Module):
-    def __init__(self, pretrained=True, num_classes=10, num_segments=8):
+    def __init__(self, pretrained=False, num_classes=10, num_segments=8):
         super(VideoResnet18, self).__init__()
         self.resnet = models.resnet18(pretrained)
         self.num_classes = num_classes
@@ -154,19 +100,32 @@ class VideoResnet18(nn.Module):
         self.shift = GSF
 
 
+        for i in range(2):
+            self.resnet.layer1[i].conv2= nn.Sequential(
+                self.resnet.layer1[i].conv2,
+                self.shift(fPlane=self.resnet.layer1[i].conv2.in_channels, num_segments=num_segments)
+                # Add your attention module here
+            )
+        for i in range(2):
+            self.resnet.layer2[i].conv2 = nn.Sequential(
+                self.resnet.layer2[i].conv2,
+                self.shift(fPlane=self.resnet.layer2[i].conv2.in_channels, num_segments=num_segments)
+                # Add your attention module here
+            )
 
-        self.resnet.layer2[0].conv2= nn.Sequential(
-                self.resnet.layer2[0].conv2,
-                self.shift(fPlane=self.resnet.layer2[0].conv2.in_channels, num_segments=num_segments)  # Add your attention module here
+        for i in range(2):
+            self.resnet.layer3[i].conv2 = nn.Sequential(
+                self.resnet.layer3[i].conv2,
+                self.shift(fPlane=self.resnet.layer3[i].conv2.in_channels, num_segments=num_segments)
+                # Add your attention module here
             )
-        self.resnet.layer3[0].conv2= nn.Sequential(
-                self.resnet.layer3[0].conv2,
-                self.shift(fPlane=self.resnet.layer3[0].conv2.in_channels, num_segments=num_segments)  # Add your attention module here
+        for i in range(2):
+            self.resnet.layer4[i].conv2 = nn.Sequential(
+                self.resnet.layer4[i].conv2,
+                self.shift(fPlane=self.resnet.layer4[i].conv2.in_channels, num_segments=num_segments)
+                # Add your attention module here
             )
-        self.resnet.layer4[0].conv2= nn.Sequential(
-                self.resnet.layer4[0].conv2,
-                self.shift(fPlane=self.resnet.layer4[0].conv2.in_channels, num_segments=num_segments)  # Add your attention module here
-            )
+
 
         # todo batchnorm prima o dopo di shift?
 
@@ -182,11 +141,12 @@ class VideoResnet18(nn.Module):
         out = self.resnet(x)
         base_out_logits = out.view((-1, self.num_segments) + out.size()[1:])
         output = self.consensus(base_out_logits)
+       # output = base_out_logits.permute(1, 0, 2)[0]
         return output
 
 
 class VideoResnet152(nn.Module):
-    def __init__(self, pretrained=True, num_classes=100, num_segments=8):
+    def __init__(self, pretrained=False, num_classes=100, num_segments=8):
         super(VideoResnet152, self).__init__()
         self.resnet = models.resnet152(pretrained)
         self.num_classes = num_classes
@@ -250,7 +210,7 @@ class VideoResnet152(nn.Module):
 
 
 class VideoResnet101(nn.Module):
-    def __init__(self, pretrained=True, num_classes=10, num_segments=8):
+    def __init__(self, pretrained=False, num_classes=10, num_segments=8):
         super(VideoResnet101, self).__init__()
         self.resnet = models.resnet101(pretrained)
         self.num_classes = num_classes
@@ -290,10 +250,65 @@ class VideoResnet101(nn.Module):
         output = self.consensus(base_out_logits)
         return output
 
+
+
+class VideoResnet50(nn.Module):
+    def __init__(self, pretrained=False, num_classes=10, num_segments=8):
+        super(VideoResnet50, self).__init__()
+        self.resnet = models.resnet50(pretrained)
+        self.num_classes = num_classes
+        self.num_segments = num_segments
+
+        #self.shift = Tsm
+        self.shift = GSF
+        for i in range(3):
+            self.resnet.layer1[i].conv3 = nn.Sequential(
+                self.resnet.layer1[i].conv3,
+                self.shift(fPlane=self.resnet.layer1[i].conv3.in_channels, num_segments=num_segments)
+                # Add your attention module here
+            )
+        for i in range(3):
+            self.resnet.layer2[i].conv3 = nn.Sequential(
+                self.resnet.layer2[i].conv3,
+                self.shift(fPlane=self.resnet.layer2[i].conv3.in_channels, num_segments=num_segments)
+                # Add your attention module here
+            )
+
+        for i in range(6):
+            self.resnet.layer3[i].conv3= nn.Sequential(
+                self.resnet.layer3[i].conv3,
+                self.shift(fPlane=self.resnet.layer3[i].conv3.in_channels, num_segments=num_segments)  # Add your attention module here
+            )
+        for i in range(3):
+            self.resnet.layer4[i].conv3 = nn.Sequential(
+                self.resnet.layer4[i].conv3 ,
+                self.shift(fPlane=self.resnet.layer4[i].conv3.in_channels, num_segments=num_segments) # Add your attention module here
+            )
+
+
+        # todo batchnorm prima o dopo di shift?
+
+        # Modify the classifier layer for the new number of classes
+        in_features = self.resnet.fc.in_features
+        self.resnet.fc = nn.Sequential(nn.Dropout(p=0.5),
+            nn.Linear(in_features, num_classes))
+
+        self.consensus = ConsensusModule('avg')
+
+    def forward(self, input):
+        x = input.view((-1, 3) + input.size()[-2:])
+        out = self.resnet(x)
+        base_out_logits = out.view((-1, self.num_segments) + out.size()[1:])
+        output = self.consensus(base_out_logits)
+        return output
+
+
+
+
 if __name__=='__main__':
 
     input = torch.rand((8, 3*8, 64, 64))
-    model = VideoResnet18(pretrained=True, num_classes=10, num_segments=8)
+    model = VideoResnet50(pretrained=True, num_classes=10, num_segments=8)
     print(model)
     output = model(input)
     print(output.shape)
