@@ -13,9 +13,10 @@ import torch.nn as nn
 import torch.backends.cudnn as cudnn
 
 class Trainer(BaseTrainer):
-    def __init__(self, model, architect, loss, resume, config, train_loader, val_loader, test_loader, prefetch=True):
-        super(Trainer, self).__init__(model, architect, loss, resume, config, train_loader, val_loader, test_loader)
+    def __init__(self, args, architect, loss, resume, config, train_loader, val_loader, test_loader, prefetch=True):
+        super(Trainer, self).__init__(architect, loss, resume, config, train_loader, val_loader, test_loader)
 
+        self.args = args
         self.wrt_mode, self.wrt_step = 'train_', 0
         self.log_step = config['trainer'].get('log_per_iter', int(np.sqrt(self.train_loader.batch_size)))
         if config['trainer']['log_per_iter']: self.log_step = int(self.log_step / self.train_loader.batch_size) + 1
@@ -30,11 +31,12 @@ class Trainer(BaseTrainer):
             transforms.Resize((400, 400)),
             transforms.ToTensor()])
 
-        if self.device == torch.device('cpu'): prefetch = False
+        if self.args.device == torch.device('cpu'): prefetch = False
         if prefetch:
-            self.train_loader = DataPrefetcher(train_loader, device=self.device)
-            self.val_loader = DataPrefetcher(val_loader, device=self.device)
-            self.test_loader = DataPrefetcher(test_loader, device=self.device)
+            print('prefetching')
+            self.train_loader = DataPrefetcher(train_loader, device=self.args.device)
+            self.val_loader = DataPrefetcher(val_loader, device=self.args.device)
+            self.test_loader = DataPrefetcher(test_loader, device=self.args.device)
 
         # ---- added ----
         cudnn.benchmark = True
@@ -65,7 +67,7 @@ class Trainer(BaseTrainer):
 
         for batch_idx, (data, target) in enumerate(tbar):
             self.data_time.update(time.time() - tic)
-            data, target = data.to(self.device), target.to(self.device)
+            data, target = data.to(self.args.device), target.to(self.args.device)
 
             input_search, target_search = next(iter(self.val_loader))
             input_search = input_search.cuda();
@@ -73,9 +75,9 @@ class Trainer(BaseTrainer):
 
             # LOSS & OPTIMIZE
             #train alpha
-            self.model.module.optimizer.zero_grad()
+            self.model.optimizer.zero_grad()
             self.architect.module.optimizer.zero_grad()
-            self.architect.module.step(data, target, input_search, target_search, lr, self.model.module.optimizer)
+            self.architect.module.step(data, target, input_search, target_search, lr, self.model.optimizer)
 
             ## sdarts
             if perturb_alpha:
@@ -86,15 +88,15 @@ class Trainer(BaseTrainer):
                 perturb_alpha(self.model, data, target, epsilon_alpha)
 
             ## train weights
-            self.model.module.optimizer.zero_grad(); self.architect.module.optimizer.zero_grad()
-            output, loss = self.model.module.step(data, target, self.config)
+            self.model.optimizer.zero_grad(); self.architect.module.optimizer.zero_grad()
+            output, loss = self.model.step(data, target, self.config)
 
             self.total_loss.update(loss.item()) #todo da definire
 
             ## sdarts
             if perturb_alpha:
                 ## restore alpha to unperturbed arch_parameters
-                self.model.module.restore_arch_parameters()
+                self.model.restore_arch_parameters()
 
             self.lr_scheduler.step(epoch=epoch - 1)
 
@@ -132,7 +134,7 @@ class Trainer(BaseTrainer):
         seg_metrics = self._get_seg_metrics()
         for k, v in list(seg_metrics.items())[:-1]:
             self.writer.add_scalar(f'{self.wrt_mode}/{k}', v, self.wrt_step)
-        for i, opt_group in enumerate(self.model.module.optimizer.param_groups):
+        for i, opt_group in enumerate(self.model.optimizer.param_groups):
             self.writer.add_scalar(f'{self.wrt_mode}/Learning_rate_{i}', opt_group['lr'], self.wrt_step)
             # self.writer.add_scalar(f'{self.wrt_mode}/Momentum_{k}', opt_group['momentum'], self.wrt_step)
 
@@ -172,16 +174,16 @@ class Trainer(BaseTrainer):
                 # LOSS
 
                 if weights_dict is None:
-                    loss, output = self.model.module._loss(data, target, return_logits=True, train=False)
+                    loss, output = self.model._loss(data, target, return_logits=True, train=False)
                 else:
                     output = self.model(data, weights_dict=weights_dict)
-                    loss = self.model.module._criterion(output, target)
+                    loss = self.model._criterion(output, target)
 
                # if self.config['arch']['type'][:4] == 'UNet':
                 #    output = output[0]
 
-                if isinstance(self.loss, torch.nn.DataParallel):
-                    loss = loss.mean()
+                # if isinstance(self.loss, torch.nn.DataParallel):
+                loss = loss.mean()
                 self.total_loss.update(loss.item())
 
                 seg_metrics = eval_metrics(output, target, self.num_classes)

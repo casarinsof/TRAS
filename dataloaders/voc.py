@@ -29,6 +29,25 @@ class VOCDataset(BaseDataSet):
 
         file_list = os.path.join(self.root, "ImageSets/Segmentation", self.split + ".txt")
         self.files = [line.rstrip() for line in tuple(open(file_list, "r"))]
+
+        if self.splitting and (self.val_split != 0.0): #  and (self.split not in ["val", "test"])
+            split_indx = int(len(self.files) * self.val_split)
+            print('son mi')
+            np.random.seed(0)
+            
+            indxs = np.arange(len(self.files))
+            np.random.shuffle(indxs)
+            train_indxs = indxs[split_indx:]
+            # print(train_indxs)
+            val_indxs = indxs[:split_indx]
+            # print(val_indxs)
+            
+            if self.splitting == 'train':
+                self.files = [self.files[train_indx] for train_indx in train_indxs]
+            elif self.splitting == 'val':
+                self.files = [self.files[val_indx] for val_indx in val_indxs]
+            else:
+                raise ValueError("Unknown splitting")
     
     def _load_data(self, index):
         image_id = self.files[index]
@@ -67,8 +86,8 @@ class VOCAugDataset(BaseDataSet):
 
 
 class VOC(BaseDataLoader):
-    def __init__(self, data_dir, batch_size, split, crop_size=None, base_size=None, scale=True, num_workers=1, val=False,
-                    shuffle=False, flip=False, rotate=False, blur= False, augment=False, val_split= None, return_id=False):
+    def __init__(self, data_dir, batch_size, split, rank, total_batch_size=None, crop_size=None, base_size=None, scale=True, num_workers=1, val=False,
+                    shuffle=False, flip=False, rotate=False, blur= False, augment=False, val_split=None, return_id=False, splitting=None):
         
         self.MEAN = [0.45734706, 0.43338275, 0.40058118]
         self.STD = [0.23965294, 0.23532275, 0.2398498]
@@ -86,13 +105,16 @@ class VOC(BaseDataLoader):
             'blur': blur,
             'rotate': rotate,
             'return_id': return_id,
-            'val': val
+            'val': val,
+            'val_split': val_split,
+            'splitting': splitting
         }
     
         if split in ["train_aug", "trainval_aug", "val_aug", "test_aug"]:
             self.dataset = VOCAugDataset(**kwargs)
         elif split in ["train", "trainval", "val", "test"]:
             self.dataset = VOCDataset(**kwargs)
+            print(len(self.dataset))
         else: raise ValueError(f"Invalid split name {split}")
-        super(VOC, self).__init__(self.dataset, batch_size, shuffle, num_workers, val_split)
+        super(VOC, self).__init__(self.dataset, batch_size, shuffle, num_workers, rank, val_split)
 

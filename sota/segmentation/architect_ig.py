@@ -1,8 +1,9 @@
 import torch
 
 
-class Architect(object):
+class Architect(torch.nn.Module):
     def __init__(self, model, args):
+        super(Architect, self).__init__()
         self.network_momentum = args['optimizer']['args']['momentum']
         self.network_weight_decay = args['optimizer']['args']['weight_decay']
         self.model = model

@@ -5,17 +5,21 @@ from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
 
 class BaseDataLoader(DataLoader):
-    def __init__(self, dataset, batch_size, shuffle, num_workers, val_split = 0.0):
+    def __init__(self, dataset, batch_size, shuffle, num_workers, rank, val_split = 0.0):
         self.shuffle = shuffle
         self.dataset = dataset
         self.nbr_examples = len(dataset)
-        if val_split: self.train_sampler, self.val_sampler = self._split_sampler(val_split)
-        else: self.train_sampler, self.val_sampler = None, None
+        self.rank = rank
+        # if val_split: self.train_sampler, self.val_sampler = self._split_sampler(val_split)
+        # else: self.train_sampler, self.val_sampler = None, None
+
+        self.train_sampler = torch.utils.data.distributed.DistributedSampler(self.dataset, shuffle=self.shuffle, rank=self.rank)
+        print(self.train_sampler.num_replicas)
 
         self.init_kwargs = {
             'dataset': self.dataset,
             'batch_size': batch_size,
-            'shuffle': self.shuffle,
+            'shuffle': False,
             'num_workers': num_workers,
             'pin_memory': True
         }
