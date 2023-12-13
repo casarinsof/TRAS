@@ -20,8 +20,8 @@ def get_instance(module, name, config, *args):
 
 
 class BaseTrainer:
-    def __init__(self, model, architect, loss, resume, config, train_loader, val_loader, test_loader):
-        self.model = model
+    def __init__(self, architect, loss, resume, config, train_loader, val_loader, test_loader):
+        self.model = architect.module.model
         self.architect = architect
         self.loss = loss
         self.config = config
@@ -33,22 +33,22 @@ class BaseTrainer:
         self.improved = False
 
         # SETTING THE DEVICE
-        self.device, availble_gpus = self._get_available_devices(self.config['n_gpu'])
-        if config["use_synch_bn"]:
-            self.model = convert_model(self.model)
-            self.model = DataParallelWithCallback(self.model, device_ids=availble_gpus)
-        else:
-            self.model = torch.nn.DataParallel(self.model, device_ids=availble_gpus)
+        # self.device, availble_gpus = self._get_available_devices(self.config['n_gpu'])
+        # if config["use_synch_bn"]:
+        #     self.model = convert_model(self.model)
+        #     self.model = DataParallelWithCallback(self.model, device_ids=availble_gpus)
+        # else:
+        #     self.model = torch.nn.DataParallel(self.model, device_ids=availble_gpus)
 
     #    if config["use_synch_bn"]:
     #        self.architect = convert_model(self.architect)
-   #         self.architect = DataParallelWithCallback(self.architect, device_ids=availble_gpus)
-   #     else:
-   #         self.architect = torch.nn.DataParallel(self.architect, device_ids=availble_gpus)
-   #     self.architect.to(self.device)
-        self.model.to(self.device)
-        print(f"\nThe model is split across {len(self.model.device_ids)} device(s).")
-        print(f"\nThe architect is split across {len(self.architect.device_ids)} device(s).")
+    #        self.architect = DataParallelWithCallback(self.architect, device_ids=availble_gpus)
+    #    else:
+    #        self.architect = torch.nn.DataParallel(self.architect, device_ids=availble_gpus)
+    #    self.architect.to(self.device)
+        # self.model.to(self.device)
+        # print(f"\nThe model is split across {len(self.model.device_ids)} device(s).")
+        # print(f"\nThe architect is split across {len(self.architect.device_ids)} device(s).")
 
         # CONFIGS
         cfg_trainer = self.config['trainer']
@@ -57,7 +57,7 @@ class BaseTrainer:
         dataset = self.config['train_loader']['type']
 
 
-        self.lr_scheduler = getattr(utils.lr_scheduler, config['lr_scheduler']['type'])(self.model.module.optimizer, self.epochs,
+        self.lr_scheduler = getattr(utils.lr_scheduler, config['lr_scheduler']['type'])(self.model.optimizer, self.epochs,
                                                                                         len(train_loader))
         # darts-pt would have
         # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -136,10 +136,10 @@ class BaseTrainer:
                 self.logger.info('epoch %d epsilon_alpha %e', epoch, epsilon_alpha)
 
             ## logging
-            genotype = self.model.module.genotype()
+            genotype = self.model.genotype()
             # logging.info('param size = %f', num_params)
             self.logger.info('genotype = %s', genotype)
-            self.model.module.printing(self.logger)
+            self.model.printing(self.logger)
 
             lr = self.lr_scheduler.get_lr()[0]
             results, train_acc, train_obj = self._train_epoch(epoch, lr, self.perturb_alpha, epsilon_alpha)
@@ -193,7 +193,7 @@ class BaseTrainer:
 
         # ---------------------- PROJECTION --------------------------------
         if self.config['dev'] == 'proj':
-            pt_project(self.train_loader, self.val_loader, self.model, self.architect, self.model.module.optimizer,
+            pt_project(self.train_loader, self.val_loader, self.model, self.architect, self.model.optimizer,
                        self.start_epoch, self.config, self._valid_epoch, self.perturb_alpha, self.config['epsilon_alpha'])
 
         self.writer.close()
@@ -204,7 +204,7 @@ class BaseTrainer:
             'epoch': epoch,
             'state_dict': self.model.state_dict(),
             'alpha': self.model.arch_parameters(),
-            'optimizer': self.model.module.optimizer.state_dict(),
+            'optimizer': self.model.optimizer.state_dict(),
             'arch_optimizer': self.architect.optimizer.state_dict(),
             'scheduler': self.lr_scheduler.state_dict(),
             'monitor_best': self.mnt_best,
