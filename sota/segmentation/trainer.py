@@ -83,7 +83,7 @@ class Trainer(BaseTrainer):
             if perturb_alpha:
                 # transform arch_parameters to prob (for perturbation)
                 self.model.softmax_arch_parameters()
-                self.model.module.optimizer.zero_grad()
+                self.model.optimizer.zero_grad()
                 self.architect.module.optimizer.zero_grad()
                 perturb_alpha(self.model, data, target, epsilon_alpha)
 

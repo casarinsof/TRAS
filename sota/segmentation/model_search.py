@@ -8,7 +8,7 @@ from nasbench201.utils import drop_path
 import models
 import torch
 
-
+torch.manual_seed(0)
 
 def get_instance(module, name, config, *args):
     # GET THE CORRESPONDING CLASS / FCT
