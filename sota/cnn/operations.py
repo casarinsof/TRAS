@@ -6,6 +6,10 @@ import torchvision.transforms.v2 as v2
 import torchvision.transforms.functional as tf
 import numpy as np
 import random
+
+random.seed(0)
+np.random.seed(0)
+
 OPS = {
     'identity': lambda: Identity(),
     'vshift': lambda: RandTrasl_x(),

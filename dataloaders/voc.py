@@ -32,7 +32,6 @@ class VOCDataset(BaseDataSet):
 
         if self.splitting and (self.val_split != 0.0): #  and (self.split not in ["val", "test"])
             split_indx = int(len(self.files) * self.val_split)
-            print('son mi')
             np.random.seed(0)
             
             indxs = np.arange(len(self.files))
