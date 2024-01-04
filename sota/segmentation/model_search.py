@@ -109,19 +109,22 @@ class Network(nn.Module):
         nn.Module.PRIMITIVES = primitives;
         self.op_names = primitives
 
-        self.stem = Replicate(self.num_segments)
+        self.stem = Replicate(self.num_segments) # takes image and creates video of num_segments frames
 
         self.cells = nn.ModuleList()
 
         for i in range(layers):  # generalized to multiple cells (layers != 1)
-            cell = Cell(steps, multiplier, self.num_segments, num_classes)
+            cell = Cell(steps, multiplier, self.num_segments, num_classes) # cells applies a transform to each frame
             self.cells += [cell]
 
         # todo questo lo devo mettere dentro  dartsProj
+        # fix this for DDP
         self.net = get_instance(models, 'arch', config, num_classes)
 
 
         # OPTIMIZER
+        # check if it enters here
+        # must have all the model trainable parameters
         if self.config['optimizer']['differential_lr']:
             if isinstance(self, torch.nn.DataParallel):
                 trainable_params = [
@@ -193,6 +196,7 @@ class Network(nn.Module):
 
     def _initialize_alphas_numpy(self, k, num_ops):
         ''' init from specified arch '''
+        # check if .cuda() is ok
         return Variable(1e-3 * torch.randn(k, num_ops).cuda(), requires_grad=True)
 
     def forward(self, input):

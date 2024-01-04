@@ -20,8 +20,9 @@ def get_instance(module, name, config, *args):
 
 
 class BaseTrainer:
-    def __init__(self, architect, loss, resume, config, train_loader, val_loader, test_loader):
-        self.model = architect.module.model
+    def __init__(self, model, architect, loss, resume, config, train_loader, val_loader, test_loader):
+        # see if this needs to be detached
+        self.model = model
         self.architect = architect
         self.loss = loss
         self.config = config
@@ -57,7 +58,7 @@ class BaseTrainer:
         dataset = self.config['train_loader']['type']
 
 
-        self.lr_scheduler = getattr(utils.lr_scheduler, config['lr_scheduler']['type'])(self.model.optimizer, self.epochs,
+        self.lr_scheduler = getattr(utils.lr_scheduler, config['lr_scheduler']['type'])(self.model.module.optimizer, self.epochs,
                                                                                         len(train_loader))
         # darts-pt would have
         # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -133,31 +134,40 @@ class BaseTrainer:
 
             if self.config['architect']['perturb_alpha']:
                 epsilon_alpha = 0.03 + (self.config['architect']['epsilon_alpha'] - 0.03) * epoch / self.epochs
-                self.logger.info('epoch %d epsilon_alpha %e', epoch, epsilon_alpha)
+                if self.args.local_rank == 0: self.logger.info('epoch %d epsilon_alpha %e', epoch, epsilon_alpha)
 
             ## logging
-            genotype = self.model.genotype()
+            genotype = self.model.module.genotype()
             # logging.info('param size = %f', num_params)
-            self.logger.info('genotype = %s', genotype)
-            self.model.printing(self.logger)
+            if self.args.local_rank == 0:
+                self.logger.info('genotype = %s', genotype)
+                self.model.module.printing(self.logger)
 
             lr = self.lr_scheduler.get_lr()[0]
+            torch.distributed.barrier()
             results, train_acc, train_obj = self._train_epoch(epoch, lr, self.perturb_alpha, epsilon_alpha)
-            self.logger.info('train_acc %f | train_obj %f', train_acc, train_obj)
-            self.writer.add_scalar('Acc/train', train_acc, epoch)
-            self.writer.add_scalar('Obj/train', train_obj, epoch)
+            torch.distributed.barrier()
+            if self.args.local_rank == 0:
+                self.logger.info('train_acc %f | train_obj %f', train_acc, train_obj)
+                self.writer.add_scalar('Acc/train', train_acc, epoch)
+                self.writer.add_scalar('Obj/train', train_obj, epoch)
 
-
+            torch.distributed.barrier()
             val_results, valid_acc, valid_obj = self._valid_epoch(epoch, test=False)
-            self.logger.info('valid_acc %f | valid_obj %f', valid_acc, valid_obj)
-            self.writer.add_scalar('Acc/valid', valid_acc, epoch)
-            self.writer.add_scalar('Obj/valid', valid_obj, epoch)
+            torch.distributed.barrier()
+            if self.args.local_rank == 0:
+                self.logger.info('valid_acc %f | valid_obj %f', valid_acc, valid_obj)
+                self.writer.add_scalar('Acc/valid', valid_acc, epoch)
+                self.writer.add_scalar('Obj/valid', valid_obj, epoch)
 
+            torch.distributed.barrier()
             if self.do_test and epoch % self.config['trainer']['test_per_epochs'] == 0: #todo aggiungere al config quello
                 test_results, test_acc, test_obj = self._valid_epoch(epoch, test=True)
-                self.logger.info('test_acc %f | test_obj %f', test_acc, test_obj)
-                self.writer.add_scalar('Acc/test', test_acc, epoch)
-                self.writer.add_scalar('Obj/test', test_obj, epoch)
+                torch.distributed.barrier()
+                if self.args.local_rank == 0:
+                    self.logger.info('test_acc %f | test_obj %f', test_acc, test_obj)
+                    self.writer.add_scalar('Acc/test', test_acc, epoch)
+                    self.writer.add_scalar('Obj/test', test_obj, epoch)
 
 
            # if self.train_logger is not None:
@@ -188,12 +198,12 @@ class BaseTrainer:
      #               break
 
             # SAVE CHECKPOINT
-            if epoch % self.save_period == 0:
+            if (epoch % self.save_period == 0) and (self.args.local_rank == 0):
                 self._save_checkpoint(epoch, save_best=self.improved)
 
         # ---------------------- PROJECTION --------------------------------
         if self.config['dev'] == 'proj':
-            pt_project(self.train_loader, self.val_loader, self.model, self.architect, self.model.optimizer,
+            pt_project(self.train_loader, self.val_loader, self.model, self.architect, self.model.module.optimizer,
                        self.start_epoch, self.config, self._valid_epoch, self.perturb_alpha, self.config['epsilon_alpha'])
 
         self.writer.close()
@@ -203,9 +213,9 @@ class BaseTrainer:
             'arch': type(self.model).__name__,
             'epoch': epoch,
             'state_dict': self.model.state_dict(),
-            'alpha': self.model.arch_parameters(),
-            'optimizer': self.model.optimizer.state_dict(),
-            'arch_optimizer': self.architect.optimizer.state_dict(),
+            'alpha': self.model.module.arch_parameters(),
+            'optimizer': self.model.module.optimizer.state_dict(),
+            'arch_optimizer': self.architect.module.optimizer.state_dict(),
             'scheduler': self.lr_scheduler.state_dict(),
             'monitor_best': self.mnt_best,
             'config': self.config

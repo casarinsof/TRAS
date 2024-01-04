@@ -261,7 +261,9 @@ def resnet50(pretrained=False, root='./pretrained', **kwargs):
     """
     model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
     if pretrained:
-        model.load_state_dict(load_url(model_urls['resnet50'], model_dir=root))
+        if int(torch.distributed.get_rank()) == 0:
+            model.load_state_dict(load_url(model_urls['resnet50'], model_dir=root))
+        torch.distributed.barrier()
     return model
 
 
