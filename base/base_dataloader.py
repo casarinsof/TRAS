@@ -14,7 +14,6 @@ class BaseDataLoader(DataLoader):
         # else: self.train_sampler, self.val_sampler = None, None
 
         self.train_sampler = torch.utils.data.distributed.DistributedSampler(self.dataset, shuffle=self.shuffle, rank=self.rank)
-        print(self.train_sampler.num_replicas)
 
         self.init_kwargs = {
             'dataset': self.dataset,

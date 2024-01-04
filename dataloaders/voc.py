@@ -32,15 +32,12 @@ class VOCDataset(BaseDataSet):
 
         if self.splitting and (self.val_split != 0.0): #  and (self.split not in ["val", "test"])
             split_indx = int(len(self.files) * self.val_split)
-            print('son mi')
             np.random.seed(0)
             
             indxs = np.arange(len(self.files))
             np.random.shuffle(indxs)
             train_indxs = indxs[split_indx:]
-            # print(train_indxs)
             val_indxs = indxs[:split_indx]
-            # print(val_indxs)
             
             if self.splitting == 'train':
                 self.files = [self.files[train_indx] for train_indx in train_indxs]
@@ -114,7 +111,6 @@ class VOC(BaseDataLoader):
             self.dataset = VOCAugDataset(**kwargs)
         elif split in ["train", "trainval", "val", "test"]:
             self.dataset = VOCDataset(**kwargs)
-            print(len(self.dataset))
         else: raise ValueError(f"Invalid split name {split}")
         super(VOC, self).__init__(self.dataset, batch_size, shuffle, num_workers, rank, val_split)
 

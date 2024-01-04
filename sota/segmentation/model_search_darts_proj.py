@@ -7,6 +7,8 @@ import sys
 sys.path.insert(0, '../../')
 from sota.segmentation.model_search import Network
 
+torch.manual_seed(0)
+
 class DartsNetworkProj(Network):
     def __init__(self, C, num_classes, layers, criterion, primitives, config,
                  steps=1, multiplier=4, stem_multiplier=3, drop_path_prob=0.0):

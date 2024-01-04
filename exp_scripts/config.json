@@ -33,7 +33,7 @@
     "train_loader": {
         "type": "VOC",
         "args":{
-            "data_dir": "/home/sofiacasarin/data/VOC/",
+            "data_dir": "/workspace/bozen/VOC/",
             "batch_size": 4,
             "base_size": 400,
             "crop_size": 380,
@@ -44,7 +44,7 @@
             "rotate": true,
             "blur": true,
             "split": "train",
-            "num_workers": 8,
+            "num_workers": 4,
             "val_split": 0.5
         }
     },
@@ -52,7 +52,7 @@
     "val_loader": {
         "type": "VOC",
         "args":{
-            "data_dir":  "/home/sofiacasarin/data/VOC/",
+            "data_dir":  "/workspace/bozen/VOC/",
             "batch_size": 2,
             "crop_size": 480,
             "val": true,
@@ -63,7 +63,7 @@
     "test_loader": {
         "type": "VOC",
         "args":{
-            "data_dir":  "/home/sofiacasarin/data/VOC/",
+            "data_dir":  "/workspace/bozen/VOC/",
             "batch_size": 2,
             "crop_size": 480,
             "val": true,

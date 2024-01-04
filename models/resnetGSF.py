@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 from torch.utils.model_zoo import load_url as load_state_dict_from_url
@@ -303,9 +304,11 @@ def _resnet(arch, block, layers, pretrained, progress, num_segments, gsf_ch_rati
     model = ResNet(block, layers, num_segments=num_segments, gsf_ch_ratio=gsf_ch_ratio, **kwargs)
 
     if pretrained:
-        state_dict = load_state_dict_from_url(model_urls[arch],
-                                              progress=progress)
-        model.load_state_dict(state_dict, strict=False)
+        if int(torch.distributed.get_rank()) == 0:
+            state_dict = load_state_dict_from_url(model_urls[arch],
+                                                progress=progress)
+            model.load_state_dict(state_dict, strict=False)
+        torch.distributed.barrier()
     gsf_cnt = 0
     for k, v in model.state_dict().items():
         if 'conv3D.weight' in k:

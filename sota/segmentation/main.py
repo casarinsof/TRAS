@@ -15,6 +15,7 @@ from sota.segmentation.spaces import spaces_dict
 import warnings
 # Suppress all warnings
 warnings.filterwarnings("ignore")
+import copy
 def get_instance(module, name, config, rank, *args, splitting=None):
     # GET THE CORRESPONDING CLASS / FCT
     return getattr(module, config[name]['type'])(*args, **config[name]['args'], rank=rank)
@@ -43,7 +44,10 @@ args.world_size = args.num_gpus * args.num_nodes
 
 # Set `MASTER_ADDR` and `MASTER_PORT` environment variables
 os.environ['MASTER_ADDR'] = 'localhost' 
-os.environ['MASTER_PORT'] = '43211'
+os.environ['MASTER_PORT'] = '43215'
+
+def cleanup():
+    torch.distributed.destroy_process_group()
 
 def main(config, args):
 
@@ -72,6 +76,7 @@ def main(config, args):
     loss = getattr(losses, config['loss'])(ignore_index=config['ignore_index'])
 
     # MODEL
+    # here I am initializing only one model not two like in original code, maybe we need two!
     if config['arch']['method'] == 'darts':
         model = DartsNetwork(config['space']['init_channels'], train_queue.dataset.num_classes, config['space']['layers'], loss,
                              spaces_dict[config['space']['search_space']],
@@ -83,16 +88,19 @@ def main(config, args):
     else:
         model = None
 
-    # architect = Architect(model, config)
+    architect = Architect(copy.deepcopy(model), config)
     # Wrap model with nn.parallel.DistributedDataParallel
-    architect = Architect(model, config).cuda()
+    architect = architect.cuda()
     architect = torch.nn.parallel.DistributedDataParallel(architect, device_ids=[args.local_rank])
+    #
+    model = model.cuda()
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank])
 
 
     # TRAINING
     trainer = Trainer(
         args=args,
-        # model=model,
+        model=model, # model... model.detach()
         architect=architect,
         loss=loss,
         resume=args.resume,
@@ -102,6 +110,8 @@ def main(config, args):
         test_loader=test_queue)
 
     trainer.train()
+
+    cleanup()
 
 
 def worker(local_rank, args):
